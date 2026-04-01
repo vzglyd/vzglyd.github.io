@@ -1,70 +1,66 @@
 /**
- * app.js — vzglyd browser preview orchestrator.
+ * app.js — vzglyd web host orchestrator.
  *
- * Flow:
- *   1. File drop / picker → extract .vzglyd zip (fflate)
- *   2. Validate manifest.json
- *   3. Instantiate slide.wasm with WASI + vzglyd_host imports
- *   4. Run _start(), read SlideSpec from guest memory, decode with postcard
- *   5. Init WebGPU renderer
- *   6. requestAnimationFrame loop: update WASM → update GPU → render
+ * This is the stripped-down UI layer that:
+ * 1. Loads the vzglyd_web WASM module
+ * 2. Sets up WebGPU context
+ * 3. Handles file drop for loading .vzglyd bundles
+ * 4. Runs the requestAnimationFrame loop
+ *
+ * All kernel logic (scheduling, transitions, spec decoding) is in Rust.
  */
-
-// postcard.js, wasm-host.js, renderer.js and fflate (UMD) are loaded as
-// plain <script> tags before this file — all their symbols are global.
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
-const dropZone      = document.getElementById('drop-zone');
-const fileInput     = document.getElementById('file-input');
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
 const canvasContainer = document.getElementById('canvas-container');
-const canvas        = document.getElementById('render-canvas');
-const slideName     = document.getElementById('slide-name');
-const slideFps      = document.getElementById('slide-fps');
-const backBtn       = document.getElementById('back-btn');
-const statusBar     = document.getElementById('status-bar');
+const canvas = document.getElementById('render-canvas');
+const slideName = document.getElementById('slide-name');
+const slideFps = document.getElementById('slide-fps');
+const backBtn = document.getElementById('back-btn');
+const statusBar = document.getElementById('status-bar');
 const statusSpinner = document.getElementById('status-spinner');
-const statusText    = document.getElementById('status-text');
-const errorBox      = document.getElementById('error-box');
-const errorText     = document.getElementById('error-text');
-const errorDismiss       = document.getElementById('error-dismiss');
-const noWebgpu           = document.getElementById('no-webgpu');
-const fileOriginWarning  = document.getElementById('file-origin-warning');
+const statusText = document.getElementById('status-text');
+const errorBox = document.getElementById('error-box');
+const errorText = document.getElementById('error-text');
+const errorDismiss = document.getElementById('error-dismiss');
+const noWebgpu = document.getElementById('no-webgpu');
+const fileOriginWarning = document.getElementById('file-origin-warning');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-/** @type {VzglydRenderer|null} */
-let activeRenderer = null;
-let rafId          = null;
+/** @type {import('./pkg/vzglyd_web.js').WebHost|null} */
+let webHost = null;
+
+let rafId = null;
+let lastTimestamp = 0;
 
 // ── Startup checks ────────────────────────────────────────────────────────────
 
 async function checkWebGPU() {
-  if (!navigator.gpu) {
-    dropZone.hidden = true;
-    noWebgpu.hidden = false;
-    return;
-  }
+    if (!navigator.gpu) {
+        dropZone.hidden = true;
+        noWebgpu.hidden = false;
+        return;
+    }
 
-  if (location.protocol === 'file:') {
-    // Chromium-based browsers silently return null from requestAdapter() on
-    // file:// origins even when WebGPU is otherwise available.
-    dropZone.hidden = true;
-    fileOriginWarning.hidden = false;
-    return;
-  }
+    if (location.protocol === 'file:') {
+        dropZone.hidden = true;
+        fileOriginWarning.hidden = false;
+        return;
+    }
 
-  // Probe the adapter now so we surface the "enable the flag" message at page
-  // load rather than after the user has already dropped a file.
-  const adapter =
-    await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }) ??
-    await navigator.gpu.requestAdapter() ??
-    await navigator.gpu.requestAdapter({ forceFallbackAdapter: true });
+    // Probe the adapter
+    const adapter =
+        await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }) ??
+        await navigator.gpu.requestAdapter() ??
+        await navigator.gpu.requestAdapter({ forceFallbackAdapter: true });
 
-  if (!adapter) {
-    dropZone.hidden = true;
-    noWebgpu.hidden = false;
-  }
+    if (!adapter) {
+        dropZone.hidden = true;
+        noWebgpu.hidden = false;
+    }
 }
 
 checkWebGPU();
@@ -72,215 +68,203 @@ checkWebGPU();
 // ── Copy-command buttons ───────────────────────────────────────────────────────
 
 document.querySelectorAll('.copy-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const targetId = btn.dataset.target;
-    const text = document.getElementById(targetId)?.textContent ?? '';
-    navigator.clipboard.writeText(text).then(() => {
-      btn.textContent = 'Copied!';
-      btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+    btn.addEventListener('click', () => {
+        const targetId = btn.dataset.target;
+        const text = document.getElementById(targetId)?.textContent ?? '';
+        navigator.clipboard.writeText(text).then(() => {
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+        });
     });
-  });
 });
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
 
 function setStatus(msg, spinning = false) {
-  statusBar.hidden   = false;
-  statusText.textContent = msg;
-  statusSpinner.hidden   = !spinning;
+    statusBar.hidden = false;
+    statusText.textContent = msg;
+    statusSpinner.hidden = !spinning;
 }
 
 function clearStatus() {
-  statusBar.hidden = true;
-  statusText.textContent = '';
-  statusSpinner.hidden   = true;
+    statusBar.hidden = true;
+    statusText.textContent = '';
+    statusSpinner.hidden = true;
 }
 
 function showError(msg) {
-  errorText.textContent = msg;
-  errorBox.hidden = false;
-  clearStatus();
+    errorBox.hidden = false;
+    errorText.textContent = msg;
+    console.error(msg);
 }
 
-function clearError() {
-  errorBox.hidden = true;
+function hideError() {
+    errorBox.hidden = true;
 }
 
-function showCanvas(name) {
-  dropZone.hidden        = true;
-  canvasContainer.hidden = false;
-  slideName.textContent  = name;
-  clearStatus();
+// ── WASM initialization ───────────────────────────────────────────────────────
+
+async function initWasmHost() {
+    try {
+        setStatus('Loading engine...', true);
+        
+        // Import the WASM module
+        const { default: init, WebHost } = await import('./pkg/vzglyd_web.js');
+        
+        await init();
+        
+        // Get WebGPU device
+        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        if (!adapter) {
+            throw new Error('Failed to get GPU adapter');
+        }
+        
+        const device = await adapter.requestDevice();
+        
+        // Create the WebHost
+        webHost = new WebHost(canvas, device);
+        
+        setStatus('Ready. Drop a .vzglyd file.', false);
+        
+        return true;
+    } catch (e) {
+        showError(`Failed to initialize: ${e.message}`);
+        return false;
+    }
 }
 
-function showDropZone() {
-  canvasContainer.hidden = true;
-  dropZone.hidden        = false;
-  slideName.textContent  = '';
-  slideFps.textContent   = '';
-}
+// ── File loading ──────────────────────────────────────────────────────────────
 
-// ── Event wiring ──────────────────────────────────────────────────────────────
-
-errorDismiss.addEventListener('click', clearError);
-backBtn.addEventListener('click', reset);
-
-dropZone.addEventListener('dragover', e => {
-  e.preventDefault();
-  dropZone.classList.add('drag-over');
-});
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropZone.classList.remove('drag-over');
-  const file = e.dataTransfer?.files?.[0];
-  if (file) handleFile(file);
-});
-dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('keydown', e => {
-  if (e.key === 'Enter' || e.key === ' ') fileInput.click();
-});
-
-fileInput.addEventListener('change', () => {
-  const file = fileInput.files?.[0];
-  if (file) handleFile(file);
-  fileInput.value = '';
-});
-
-// ── Main flow ─────────────────────────────────────────────────────────────────
-
-function reset() {
-  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-  if (activeRenderer) { activeRenderer.stop(); activeRenderer = null; }
-  showDropZone();
-  clearError();
-  clearStatus();
-}
-
-async function handleFile(file) {
-  if (!file.name.endsWith('.vzglyd')) {
-    showError(`Expected a .vzglyd file, got: ${file.name}`);
-    return;
-  }
-
-  clearError();
-  setStatus('Extracting bundle…', true);
-
-  try {
-    const bundle = await extractBundle(file);
-    setStatus('Instantiating WASM…', true);
-
-    const { spec, host } = await loadWasm(bundle.wasmBytes);
-    setStatus('Initialising renderer…', true);
-
-    if (activeRenderer) { activeRenderer.stop(); activeRenderer = null; }
-    if (rafId !== null)  { cancelAnimationFrame(rafId); rafId = null; }
-
-    const renderer = new VzglydRenderer(canvas, spec);
-    await renderer.init();
-    activeRenderer = renderer;
-
-    renderer._onFps = fps => { slideFps.textContent = `${fps} fps`; };
-
-    showCanvas(spec.name || bundle.manifest.name || file.name);
-
-    if (renderer._shaderFallback) {
-      showError(
-        'Custom shader validation failed — rendering with default shader.\n' +
-        'Check the browser console for the specific WGSL error.'
-      );
+async function loadVzglydFile(file) {
+    if (!webHost) {
+        showError('Engine not initialized');
+        return;
     }
 
-    let lastTime = performance.now();
-
-    function frame(now) {
-      const dt = Math.min((now - lastTime) / 1000, 0.1); // cap at 100 ms
-      lastTime = now;
-
-      const updated = host.update(dt);
-      if (updated === 1) {
-        renderer.applyOverlayBytes(host.readOverlayBytes());
-        renderer.applyDynamicMeshBytes(host.readDynamicMeshBytes());
-      }
-
-      renderer.renderFrame(dt);
-      rafId = requestAnimationFrame(frame);
+    try {
+        setStatus(`Loading ${file.name}...`, true);
+        
+        // Read file as ArrayBuffer
+        const arrayBuffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        
+        // Call into WASM to load the slide
+        webHost.load_slide(bytes);
+        
+        slideName.textContent = file.name;
+        dropZone.hidden = true;
+        canvasContainer.hidden = false;
+        
+        clearStatus();
+        startRenderLoop();
+        
+    } catch (e) {
+        showError(`Failed to load slide: ${e.message}`);
     }
+}
 
+// ── Render loop ───────────────────────────────────────────────────────────────
+
+function startRenderLoop() {
+    if (rafId) {
+        cancelAnimationFrame(rafId);
+    }
+    
+    function frame(timestamp) {
+        if (!webHost) return;
+        
+        if (lastTimestamp === 0) {
+            lastTimestamp = timestamp;
+        }
+        
+        // Calculate FPS
+        const dt = (timestamp - lastTimestamp) / 1000;
+        const fps = dt > 0 ? Math.round(1 / dt) : 60;
+        slideFps.textContent = `${fps} FPS`;
+        
+        // Update the engine
+        try {
+            webHost.frame(timestamp);
+        } catch (e) {
+            console.error('Frame error:', e);
+        }
+        
+        lastTimestamp = timestamp;
+        rafId = requestAnimationFrame(frame);
+    }
+    
     rafId = requestAnimationFrame(frame);
-
-  } catch (err) {
-    console.error(err);
-    showError(err?.message ?? String(err));
-  }
 }
 
-// ── Bundle extraction (fflate) ────────────────────────────────────────────────
-
-async function extractBundle(file) {
-  // fflate is loaded as a UMD <script> tag — check it's available.
-  if (typeof fflate === 'undefined') {
-    throw new Error(
-      'fflate not loaded. Check your internet connection (needed to load the zip library from CDN).'
-    );
-  }
-
-  const arrayBuf = await file.arrayBuffer();
-  const zipData  = new Uint8Array(arrayBuf);
-
-  // fflate.unzipSync returns { 'path/name': Uint8Array, ... }
-  let files;
-  try {
-    files = fflate.unzipSync(zipData);
-  } catch (e) {
-    throw new Error(`Failed to unzip bundle: ${e?.message ?? e}`);
-  }
-
-  // manifest.json
-  const manifestBytes = files['manifest.json'];
-  if (!manifestBytes) throw new Error('Bundle is missing manifest.json');
-  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-
-  // slide.wasm
-  const wasmBytes = files['slide.wasm'];
-  if (!wasmBytes) throw new Error('Bundle is missing slide.wasm');
-
-  return { manifest, wasmBytes, files };
+function stopRenderLoop() {
+    if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+    }
+    lastTimestamp = 0;
 }
 
-// ── WASM loading and spec extraction ─────────────────────────────────────────
+// ── Event handlers ────────────────────────────────────────────────────────────
 
-async function loadWasm(wasmBytes) {
-  const host    = new VzglydWasmHost();
-  const imports = host.buildImports();
+// Drag and drop
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+});
 
-  let wasmResult;
-  try {
-    wasmResult = await WebAssembly.instantiate(wasmBytes, imports);
-  } catch (e) {
-    throw new Error(`WebAssembly.instantiate failed: ${e?.message ?? e}`);
-  }
+dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+});
 
-  host.setInstance(wasmResult.instance);
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith('.vzglyd')) {
+        loadVzglydFile(file);
+    } else {
+        showError('Please drop a .vzglyd file');
+    }
+});
 
-  // Run _start() — WASI command entry. proc_exit(0) is treated as clean exit.
-  host.runStart();
+// File input
+fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        loadVzglydFile(file);
+    }
+});
 
-  // Optional vzglyd_init()
-  host.runInit();
+// Browse button
+dropZone.querySelector('.file-label').addEventListener('click', (e) => {
+    e.preventDefault();
+    fileInput.click();
+});
 
-  // Read the wire-format spec bytes: [1-byte ABI version][postcard SlideSpec]
-  const specWire = host.readSpecBytes();
+// Back button
+backBtn.addEventListener('click', () => {
+    stopRenderLoop();
+    canvasContainer.hidden = true;
+    dropZone.hidden = false;
+    slideName.textContent = '';
+    slideFps.textContent = '';
+    webHost = null;
+    initWasmHost();
+});
 
-  // Validate ABI version
-  const abiVersion = specWire[0];
-  if (abiVersion !== 1) {
-    throw new Error(`Unsupported ABI version ${abiVersion}. Expected 1.`);
-  }
+// Error dismiss
+errorDismiss.addEventListener('click', hideError);
 
-  // Decode the postcard payload (skip the version byte)
-  const spec = decodeSlideSpec(specWire.slice(1));
+// Keyboard accessibility for drop zone
+dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fileInput.click();
+    }
+});
 
-  return { spec, host };
-}
+// ── Initialize ────────────────────────────────────────────────────────────────
+
+initWasmHost();

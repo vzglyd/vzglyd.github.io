@@ -1,0 +1,21 @@
+{
+  "name": "vzglyd-web",
+  "type": "module",
+  "description": "Web host for VZGLYD display engine (WebGPU + WASM)",
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vzglyd/vzglyd"
+  },
+  "files": [
+    "vzglyd_web_bg.wasm",
+    "vzglyd_web.js",
+    "vzglyd_web.d.ts"
+  ],
+  "main": "vzglyd_web.js",
+  "types": "vzglyd_web.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
