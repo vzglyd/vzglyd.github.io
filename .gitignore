@@ -1,0 +1,14 @@
+# Ignore large sample files
+samples/*.vzglyd
+
+# Package manager
+node_modules/
+pkg/
+
+# Build
+dist/
+
+# Editor
+.DS_Store
+*.swp
+*~
