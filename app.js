@@ -31,6 +31,7 @@ const errorDismiss = document.getElementById('error-dismiss');
 const noWebgpu = document.getElementById('no-webgpu');
 const fileOriginWarning = document.getElementById('file-origin-warning');
 const openEditorLink = document.getElementById('open-editor-link');
+const openPlayerLink = document.getElementById('open-player-link');
 
 let webHost = null;
 let rafId = null;
@@ -74,12 +75,15 @@ function resetCanvasUi() {
   activeSlideLink.removeAttribute('href');
 }
 
-function updateEditorLink() {
-  const url = new URL('./editor.html', window.location.href);
+function updateCrossLinks() {
+  const editorUrl = new URL('./editor.html', window.location.href);
+  const playerUrl = new URL('./view.html', window.location.href);
   if (state.repo?.repoBaseUrl) {
-    url.searchParams.set('repo', state.repo.repoBaseUrl);
+    editorUrl.searchParams.set('repo', state.repo.repoBaseUrl);
+    playerUrl.searchParams.set('repo', state.repo.repoBaseUrl);
   }
-  openEditorLink.href = url.toString();
+  openEditorLink.href = editorUrl.toString();
+  openPlayerLink.href = playerUrl.toString();
 }
 
 function syncLocation() {
@@ -97,7 +101,7 @@ function syncLocation() {
   }
 
   window.history.replaceState({}, '', url);
-  updateEditorLink();
+  updateCrossLinks();
 }
 
 function countEnabledSlides(slides) {
@@ -448,7 +452,7 @@ function installHandlers() {
 async function boot() {
   setRepoSummary();
   resetCanvasUi();
-  updateEditorLink();
+  updateCrossLinks();
   installCopyButtons();
   installHandlers();
 

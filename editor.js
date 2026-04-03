@@ -31,6 +31,7 @@ const editorShell = document.getElementById('editor-shell');
 const jsonStatus = document.getElementById('json-status');
 const jsonOutput = document.getElementById('json-output');
 const openPreviewLink = document.getElementById('open-preview-link');
+const openPlayerLink = document.getElementById('open-player-link');
 const statusBar = document.getElementById('status-bar');
 const statusSpinner = document.getElementById('status-spinner');
 const statusText = document.getElementById('status-text');
@@ -92,12 +93,15 @@ function hasUnsavedChanges() {
   return Boolean(state.loadedJson && state.renderedJson && state.renderedJson !== state.loadedJson);
 }
 
-function updatePreviewLink() {
-  const url = new URL('./index.html', window.location.href);
+function updateLinks() {
+  const previewUrl = new URL('./index.html', window.location.href);
+  const playerUrl = new URL('./view.html', window.location.href);
   if (state.repoBaseUrl) {
-    url.searchParams.set('repo', state.repoBaseUrl);
+    previewUrl.searchParams.set('repo', state.repoBaseUrl);
+    playerUrl.searchParams.set('repo', state.repoBaseUrl);
   }
-  openPreviewLink.href = url.toString();
+  openPreviewLink.href = previewUrl.toString();
+  openPlayerLink.href = playerUrl.toString();
 }
 
 function setRepoSummary() {
@@ -121,7 +125,7 @@ function syncControls() {
   copyJsonBtn.disabled = !ready || !state.renderedJson;
   downloadJsonBtn.disabled = !ready || !state.renderedJson;
   setRepoSummary();
-  updatePreviewLink();
+  updateLinks();
 }
 
 function entryPreviewHref(index) {
@@ -926,7 +930,7 @@ function boot() {
   setRepoSummary();
   fillTransitionSelect(defaultTransitionIn);
   fillTransitionSelect(defaultTransitionOut);
-  updatePreviewLink();
+  updateLinks();
   installHandlers();
   syncControls();
 
