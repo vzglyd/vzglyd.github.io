@@ -960,7 +960,7 @@ export class VzglydRenderer {
       : device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
     const fontSampler = spec.font
-      ? device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' })
+      ? device.createSampler({ magFilter: 'nearest', minFilter: 'nearest', mipmapFilter: 'nearest' })
       : mainSampler;
 
     return { mainSampler, fontSampler };
