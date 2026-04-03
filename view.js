@@ -9,8 +9,8 @@ import {
 } from './js/view_player.js';
 
 const REPO_STORAGE_KEY = 'vzglyd.shared_repo_url';
-const MIN_RENDER_SIZE = 512;
-const MAX_RENDER_SIZE = 1600;
+const RENDER_WIDTH = 640;
+const RENDER_HEIGHT = 480;
 
 const overlay = document.getElementById('view-overlay');
 const overlayKicker = document.getElementById('view-overlay-kicker');
@@ -29,8 +29,6 @@ const state = {
   advancing: false,
   sessionToken: 0,
 };
-
-const renderSize = computeRenderSize();
 
 class HostSlot {
   constructor(canvas, size) {
@@ -93,21 +91,14 @@ class HostSlot {
   }
 }
 
-const playerHost = new HostSlot(document.getElementById('view-canvas'), renderSize);
-
-function computeRenderSize() {
-  const viewportExtent = Math.max(
-    1,
-    Math.min(window.innerWidth || 1024, window.innerHeight || 1024),
-  );
-  const scale = Math.max(1, Math.min(window.devicePixelRatio || 1, 1.5));
-  const desired = Math.round(viewportExtent * scale);
-  return Math.max(MIN_RENDER_SIZE, Math.min(MAX_RENDER_SIZE, desired));
-}
+const playerHost = new HostSlot(document.getElementById('view-canvas'), {
+  width: RENDER_WIDTH,
+  height: RENDER_HEIGHT,
+});
 
 function sizeCanvas(canvas, size) {
-  canvas.width = size;
-  canvas.height = size;
+  canvas.width = size.width;
+  canvas.height = size.height;
 }
 
 function setOverlay(kicker, title, text, tone = 'info') {

@@ -367,8 +367,8 @@ textarea {
 
 .view-stage {
   position: relative;
-  inline-size: min(100vw, 100svh);
-  block-size: min(100vw, 100svh);
+  inline-size: min(100vw, calc(100svh * 4 / 3));
+  aspect-ratio: 4 / 3;
   overflow: hidden;
   background: #000;
 }
