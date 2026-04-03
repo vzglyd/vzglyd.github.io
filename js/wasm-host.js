@@ -131,8 +131,17 @@ class BaseWasmHost {
         return WASI_ESUCCESS;
       },
 
-      clock_time_get(clockId, _precisionLo, _precisionHi, outPtr) {
-        self._memView().setBigUint64(outPtr, self._clockTimeNs(clockId), true);
+      clock_time_get(...args) {
+        let clockId;
+        let outPtr;
+        if (args.length === 3 && typeof args[1] === 'bigint') {
+          [clockId, , outPtr] = args;
+        } else if (args.length === 4) {
+          [clockId, , , outPtr] = args;
+        } else {
+          return WASI_EINVAL;
+        }
+        self._memView().setBigUint64(outPtr >>> 0, self._clockTimeNs(clockId), true);
         return WASI_ESUCCESS;
       },
 
