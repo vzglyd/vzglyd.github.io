@@ -1,15 +1,25 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const encodeMeshAsset: (a: number, b: number) => [number, number, number];
+export const encodeSceneAnchorSet: (a: number, b: number) => [number, number, number];
+export const loadGlbScene: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
 export const __wbg_webhost_free: (a: number, b: number) => void;
 export const main: () => void;
 export const webhost_frame: (a: number, b: number) => [number, number];
-export const webhost_load_slide: (a: number, b: any) => [number, number];
-export const webhost_new: (a: any, b: any) => [number, number, number];
+export const webhost_loadBundle: (a: number, b: any, c: number) => any;
+export const webhost_loadSlide: (a: number, b: any, c: number) => any;
+export const webhost_new: (a: any, b: number) => [number, number, number];
+export const webhost_stats: (a: number) => any;
+export const webhost_teardown: (a: number) => void;
+export const wasm_bindgen__convert__closures_____invoke__h91834dc9db044ac7: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__h1a70c7e76da950ad: (a: number, b: number, c: any, d: any) => void;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-export const __externref_table_alloc: () => number;
-export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_destroy_closure: (a: number, b: number) => void;
 export const __externref_table_dealloc: (a: number) => void;
 export const __wbindgen_start: () => void;

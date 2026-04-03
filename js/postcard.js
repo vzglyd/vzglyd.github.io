@@ -420,3 +420,11 @@ function decodeRuntimeMeshSet(bytes, sceneSpace) {
   });
   return { meshes };
 }
+
+export {
+  decodeSlideSpec,
+  decodeRuntimeOverlayBytes,
+  decodeRuntimeMeshSet,
+  packVertices,
+  packIndices,
+};

@@ -2,27 +2,65 @@
 /* eslint-disable */
 
 /**
- * Web host that implements the kernel Host trait.
+ * Browser host entry point exported to JavaScript.
  */
 export class WebHost {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Updates the engine for a new frame.
+     * Advance one frame.
      */
-    frame(timestamp: number): void;
+    frame(timestamp_ms: number): void;
     /**
-     * Loads a .vzglyd slide bundle.
+     * Load a `.vzglyd` bundle from bytes.
      */
-    load_slide(bytes: Uint8Array): void;
+    loadBundle(bytes: Uint8Array, runtime_options?: any | null): Promise<void>;
     /**
-     * Creates a new web host.
+     * Backward-compatible alias used by older page shells.
      */
-    constructor(canvas: HTMLCanvasElement, device: any);
+    loadSlide(bytes: Uint8Array, runtime_options?: any | null): Promise<void>;
+    /**
+     * Create a new host bound to a canvas.
+     *
+     * `host_config` is an optional JS object consumed by the JS bridge.
+     */
+    constructor(canvas: HTMLCanvasElement, host_config?: any | null);
+    /**
+     * Snapshot host/runtime stats as a JS object.
+     */
+    stats(): any;
+    /**
+     * Dispose runtime resources.
+     */
+    teardown(): void;
 }
 
 /**
- * Initializes the web host and starts the render loop.
+ * Encode a compiled scene mesh as a MeshAsset for the slide spec.
+ */
+export function encodeMeshAsset(mesh_json: string): any;
+
+/**
+ * Encode scene anchors as a SceneAnchorSet.
+ */
+export function encodeSceneAnchorSet(scene_json: string): any;
+
+/**
+ * Load and compile a GLB scene from bytes.
+ *
+ * # Arguments
+ * * `glb_bytes` - The raw GLB file bytes
+ * * `scene_path` - Path to the GLB file (for error messages)
+ * * `scene_ref_json` - Optional JSON string with scene asset reference {path, id, label, entryCamera, compileProfile}
+ *
+ * # Returns
+ * * `Ok(JsValue)` with the compiled scene as JSON
+ * * `Err(JsValue)` if loading or compilation fails
+ */
+export function loadGlbScene(glb_bytes: Uint8Array, scene_path: string, scene_ref_json?: string | null): any;
+
+/**
+ * wasm entry hook.
  */
 export function main(): void;
 
@@ -30,16 +68,26 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly encodeMeshAsset: (a: number, b: number) => [number, number, number];
+    readonly encodeSceneAnchorSet: (a: number, b: number) => [number, number, number];
+    readonly loadGlbScene: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly __wbg_webhost_free: (a: number, b: number) => void;
     readonly main: () => void;
     readonly webhost_frame: (a: number, b: number) => [number, number];
-    readonly webhost_load_slide: (a: number, b: any) => [number, number];
-    readonly webhost_new: (a: any, b: any) => [number, number, number];
+    readonly webhost_loadBundle: (a: number, b: any, c: number) => any;
+    readonly webhost_loadSlide: (a: number, b: any, c: number) => any;
+    readonly webhost_new: (a: any, b: number) => [number, number, number];
+    readonly webhost_stats: (a: number) => any;
+    readonly webhost_teardown: (a: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h91834dc9db044ac7: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen__convert__closures_____invoke__h1a70c7e76da950ad: (a: number, b: number, c: any, d: any) => void;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __externref_table_alloc: () => number;
-    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }

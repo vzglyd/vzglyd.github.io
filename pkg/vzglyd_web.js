@@ -1,7 +1,8 @@
 /* @ts-self-types="./vzglyd_web.d.ts" */
+import { JsEngineBridge } from '../js/engine_bridge.js';
 
 /**
- * Web host that implements the kernel Host trait.
+ * Browser host entry point exported to JavaScript.
  */
 export class WebHost {
     __destroy_into_raw() {
@@ -15,32 +16,44 @@ export class WebHost {
         wasm.__wbg_webhost_free(ptr, 0);
     }
     /**
-     * Updates the engine for a new frame.
-     * @param {number} timestamp
+     * Advance one frame.
+     * @param {number} timestamp_ms
      */
-    frame(timestamp) {
-        const ret = wasm.webhost_frame(this.__wbg_ptr, timestamp);
+    frame(timestamp_ms) {
+        const ret = wasm.webhost_frame(this.__wbg_ptr, timestamp_ms);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
     }
     /**
-     * Loads a .vzglyd slide bundle.
+     * Load a `.vzglyd` bundle from bytes.
      * @param {Uint8Array} bytes
+     * @param {any | null} [runtime_options]
+     * @returns {Promise<void>}
      */
-    load_slide(bytes) {
-        const ret = wasm.webhost_load_slide(this.__wbg_ptr, bytes);
-        if (ret[1]) {
-            throw takeFromExternrefTable0(ret[0]);
-        }
+    loadBundle(bytes, runtime_options) {
+        const ret = wasm.webhost_loadBundle(this.__wbg_ptr, bytes, isLikeNone(runtime_options) ? 0 : addToExternrefTable0(runtime_options));
+        return ret;
     }
     /**
-     * Creates a new web host.
-     * @param {HTMLCanvasElement} canvas
-     * @param {any} device
+     * Backward-compatible alias used by older page shells.
+     * @param {Uint8Array} bytes
+     * @param {any | null} [runtime_options]
+     * @returns {Promise<void>}
      */
-    constructor(canvas, device) {
-        const ret = wasm.webhost_new(canvas, device);
+    loadSlide(bytes, runtime_options) {
+        const ret = wasm.webhost_loadSlide(this.__wbg_ptr, bytes, isLikeNone(runtime_options) ? 0 : addToExternrefTable0(runtime_options));
+        return ret;
+    }
+    /**
+     * Create a new host bound to a canvas.
+     *
+     * `host_config` is an optional JS object consumed by the JS bridge.
+     * @param {HTMLCanvasElement} canvas
+     * @param {any | null} [host_config]
+     */
+    constructor(canvas, host_config) {
+        const ret = wasm.webhost_new(canvas, isLikeNone(host_config) ? 0 : addToExternrefTable0(host_config));
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -48,11 +61,85 @@ export class WebHost {
         WebHostFinalization.register(this, this.__wbg_ptr, this);
         return this;
     }
+    /**
+     * Snapshot host/runtime stats as a JS object.
+     * @returns {any}
+     */
+    stats() {
+        const ret = wasm.webhost_stats(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Dispose runtime resources.
+     */
+    teardown() {
+        wasm.webhost_teardown(this.__wbg_ptr);
+    }
 }
 if (Symbol.dispose) WebHost.prototype[Symbol.dispose] = WebHost.prototype.free;
 
 /**
- * Initializes the web host and starts the render loop.
+ * Encode a compiled scene mesh as a MeshAsset for the slide spec.
+ * @param {string} mesh_json
+ * @returns {any}
+ */
+export function encodeMeshAsset(mesh_json) {
+    const ptr0 = passStringToWasm0(mesh_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.encodeMeshAsset(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Encode scene anchors as a SceneAnchorSet.
+ * @param {string} scene_json
+ * @returns {any}
+ */
+export function encodeSceneAnchorSet(scene_json) {
+    const ptr0 = passStringToWasm0(scene_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.encodeSceneAnchorSet(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Load and compile a GLB scene from bytes.
+ *
+ * # Arguments
+ * * `glb_bytes` - The raw GLB file bytes
+ * * `scene_path` - Path to the GLB file (for error messages)
+ * * `scene_ref_json` - Optional JSON string with scene asset reference {path, id, label, entryCamera, compileProfile}
+ *
+ * # Returns
+ * * `Ok(JsValue)` with the compiled scene as JSON
+ * * `Err(JsValue)` if loading or compilation fails
+ * @param {Uint8Array} glb_bytes
+ * @param {string} scene_path
+ * @param {string | null} [scene_ref_json]
+ * @returns {any}
+ */
+export function loadGlbScene(glb_bytes, scene_path, scene_ref_json) {
+    const ptr0 = passArray8ToWasm0(glb_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(scene_path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    var ptr2 = isLikeNone(scene_ref_json) ? 0 : passStringToWasm0(scene_ref_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len2 = WASM_VECTOR_LEN;
+    const ret = wasm.loadGlbScene(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * wasm entry hook.
  */
 export function main() {
     wasm.main();
@@ -61,6 +148,10 @@ export function main() {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_is_function_49868bde5eb1e745: function(arg0) {
+            const ret = typeof(arg0) === 'function';
+            return ret;
+        },
         __wbg___wbindgen_is_undefined_c0cca72b82b86f4d: function(arg0) {
             const ret = arg0 === undefined;
             return ret;
@@ -68,9 +159,13 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_81fc77679af83bc6: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_debug_50e24f25b064ded1: function(arg0) {
-            console.debug(arg0);
+        __wbg__wbg_cb_unref_3c3b4f651835fbcb: function(arg0) {
+            arg0._wbg_cb_unref();
         },
+        __wbg_call_d578befcc3145dee: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = arg0.call(arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_debug_58754cc8dbfec7ec: function(arg0, arg1, arg2, arg3) {
             console.debug(arg0, arg1, arg2, arg3);
         },
@@ -91,29 +186,17 @@ function __wbg_get_imports() {
         __wbg_error_f8d1622cb1d8c53c: function(arg0, arg1, arg2, arg3) {
             console.error(arg0, arg1, arg2, arg3);
         },
-        __wbg_info_4e3339024d0fb613: function(arg0) {
-            console.info(arg0);
-        },
+        __wbg_frame_bcc945362203de71: function() { return handleError(function (arg0, arg1) {
+            const ret = arg0.frame(arg1);
+            return ret;
+        }, arguments); },
         __wbg_info_8e80eb6c0f1d9449: function(arg0, arg1, arg2, arg3) {
             console.info(arg0, arg1, arg2, arg3);
         },
-        __wbg_instanceof_Window_c0fee4c064502536: function(arg0) {
-            let result;
-            try {
-                result = arg0 instanceof Window;
-            } catch (_) {
-                result = false;
-            }
-            const ret = result;
+        __wbg_loadBundle_0362a9a5fef35f77: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = arg0.loadBundle(arg1, arg2);
             return ret;
-        },
-        __wbg_length_0c32cb8543c8e4c8: function(arg0) {
-            const ret = arg0.length;
-            return ret;
-        },
-        __wbg_log_4c0baeb8af2f8f89: function(arg0) {
-            console.log(arg0);
-        },
+        }, arguments); },
         __wbg_log_dafe9ed5100e3a8c: function(arg0, arg1, arg2, arg3) {
             console.log(arg0, arg1, arg2, arg3);
         },
@@ -121,8 +204,41 @@ function __wbg_get_imports() {
             const ret = new Error();
             return ret;
         },
-        __wbg_now_88621c9c9a4f3ffc: function() {
-            const ret = Date.now();
+        __wbg_new_544c6235efd11368: function(arg0, arg1) {
+            const ret = new JsEngineBridge(arg0, arg1);
+            return ret;
+        },
+        __wbg_new_from_slice_2580ff33d0d10520: function(arg0, arg1) {
+            const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
+            return ret;
+        },
+        __wbg_new_typed_14d7cc391ce53d2c: function(arg0, arg1) {
+            try {
+                var state0 = {a: arg0, b: arg1};
+                var cb0 = (arg0, arg1) => {
+                    const a = state0.a;
+                    state0.a = 0;
+                    try {
+                        return wasm_bindgen__convert__closures_____invoke__h1a70c7e76da950ad(a, state0.b, arg0, arg1);
+                    } finally {
+                        state0.a = a;
+                    }
+                };
+                const ret = new Promise(cb0);
+                return ret;
+            } finally {
+                state0.a = 0;
+            }
+        },
+        __wbg_queueMicrotask_abaf92f0bd4e80a4: function(arg0) {
+            const ret = arg0.queueMicrotask;
+            return ret;
+        },
+        __wbg_queueMicrotask_df5a6dac26d818f3: function(arg0) {
+            queueMicrotask(arg0);
+        },
+        __wbg_resolve_0a79de24e9d2267b: function(arg0) {
+            const ret = Promise.resolve(arg0);
             return ret;
         },
         __wbg_stack_3b0d974bbf31e44f: function(arg0, arg1) {
@@ -148,13 +264,30 @@ function __wbg_get_imports() {
             const ret = typeof window === 'undefined' ? null : window;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_warn_2b0a27f629a4bb1e: function(arg0) {
-            console.warn(arg0);
+        __wbg_stats_c103815b0c24da22: function(arg0) {
+            const ret = arg0.stats();
+            return ret;
+        },
+        __wbg_teardown_4a9698804d8ed239: function(arg0) {
+            arg0.teardown();
+        },
+        __wbg_then_00eed3ac0b8e82cb: function(arg0, arg1, arg2) {
+            const ret = arg0.then(arg1, arg2);
+            return ret;
+        },
+        __wbg_then_a0c8db0381c8994c: function(arg0, arg1) {
+            const ret = arg0.then(arg1);
+            return ret;
         },
         __wbg_warn_b5013c1036317367: function(arg0, arg1, arg2, arg3) {
             console.warn(arg0, arg1, arg2, arg3);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 317, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h91834dc9db044ac7);
+            return ret;
+        },
+        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
@@ -175,6 +308,17 @@ function __wbg_get_imports() {
     };
 }
 
+function wasm_bindgen__convert__closures_____invoke__h91834dc9db044ac7(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h91834dc9db044ac7(arg0, arg1, arg2);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
+}
+
+function wasm_bindgen__convert__closures_____invoke__h1a70c7e76da950ad(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h1a70c7e76da950ad(arg0, arg1, arg2, arg3);
+}
+
 const WebHostFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_webhost_free(ptr >>> 0, 1));
@@ -183,6 +327,15 @@ function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
     wasm.__wbindgen_externrefs.set(idx, obj);
     return idx;
+}
+
+const CLOSURE_DTORS = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(state => wasm.__wbindgen_destroy_closure(state.a, state.b));
+
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
 }
 
 let cachedDataViewMemory0 = null;
@@ -206,8 +359,52 @@ function getUint8ArrayMemory0() {
     return cachedUint8ArrayMemory0;
 }
 
+function handleError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        const idx = addToExternrefTable0(e);
+        wasm.__wbindgen_exn_store(idx);
+    }
+}
+
 function isLikeNone(x) {
     return x === undefined || x === null;
+}
+
+function makeMutClosure(arg0, arg1, f) {
+    const state = { a: arg0, b: arg1, cnt: 1 };
+    const real = (...args) => {
+
+        // First up with a closure we increment the internal reference
+        // count. This ensures that the Rust closure environment won't
+        // be deallocated while we're invoking it.
+        state.cnt++;
+        const a = state.a;
+        state.a = 0;
+        try {
+            return f(a, state.b, ...args);
+        } finally {
+            state.a = a;
+            real._wbg_cb_unref();
+        }
+    };
+    real._wbg_cb_unref = () => {
+        if (--state.cnt === 0) {
+            wasm.__wbindgen_destroy_closure(state.a, state.b);
+            state.a = 0;
+            CLOSURE_DTORS.unregister(state);
+        }
+    };
+    CLOSURE_DTORS.register(real, state, state);
+    return real;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
