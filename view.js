@@ -3,13 +3,9 @@ import {
   loadPlaylistFromRepo,
 } from './js/playlist_repo.js';
 import {
-  DEFAULT_TRANSITION,
-  TRANSITION_DURATION_MS,
   buildPlayableSchedule,
   nextScheduleIndex,
   normalizeStartIndex,
-  resolveTransitionKind,
-  smoothstep,
 } from './js/view_player.js';
 
 const REPO_STORAGE_KEY = 'vzglyd.shared_repo_url';
@@ -29,17 +25,15 @@ const state = {
   repo: null,
   schedule: [],
   currentIndex: 0,
-  currentSlotKey: 'a',
   slideStartedAtMs: 0,
-  transition: null,
-  preload: null,
+  advancing: false,
+  sessionToken: 0,
 };
 
 const renderSize = computeRenderSize();
 
 class HostSlot {
-  constructor(key, canvas, size) {
-    this.key = key;
+  constructor(canvas, size) {
     this.canvas = canvas;
     sizeCanvas(this.canvas, size);
     this.host = null;
@@ -99,12 +93,7 @@ class HostSlot {
   }
 }
 
-const slots = {
-  a: new HostSlot('a', document.getElementById('view-canvas-a'), renderSize),
-  b: new HostSlot('b', document.getElementById('view-canvas-b'), renderSize),
-};
-
-showOnlySlot('a');
+const playerHost = new HostSlot(document.getElementById('view-canvas'), renderSize);
 
 function computeRenderSize() {
   const viewportExtent = Math.max(
@@ -134,57 +123,6 @@ function hideOverlay() {
   delete overlay.dataset.tone;
 }
 
-function resetLayerStyle(slot) {
-  slot.canvas.style.opacity = '0';
-  slot.canvas.style.clipPath = 'none';
-  slot.canvas.style.visibility = 'hidden';
-  slot.canvas.style.zIndex = '0';
-}
-
-function showOnlySlot(slotKey) {
-  for (const [key, slot] of Object.entries(slots)) {
-    resetLayerStyle(slot);
-    if (key === slotKey) {
-      slot.canvas.style.opacity = '1';
-      slot.canvas.style.visibility = 'visible';
-      slot.canvas.style.zIndex = '1';
-    }
-  }
-}
-
-function applyTransition(kind, blend, outgoingSlot, incomingSlot) {
-  resetLayerStyle(outgoingSlot);
-  resetLayerStyle(incomingSlot);
-
-  outgoingSlot.canvas.style.visibility = 'visible';
-  outgoingSlot.canvas.style.zIndex = '1';
-  incomingSlot.canvas.style.visibility = 'visible';
-  incomingSlot.canvas.style.zIndex = '2';
-
-  switch (kind) {
-    case 'cut':
-      outgoingSlot.canvas.style.opacity = '0';
-      incomingSlot.canvas.style.opacity = '1';
-      break;
-    case 'wipe_left':
-      outgoingSlot.canvas.style.opacity = '1';
-      incomingSlot.canvas.style.opacity = '1';
-      incomingSlot.canvas.style.clipPath = `inset(0 ${Math.max(0, 100 - blend * 100)}% 0 0)`;
-      break;
-    case 'wipe_down':
-      outgoingSlot.canvas.style.opacity = '1';
-      incomingSlot.canvas.style.opacity = '1';
-      incomingSlot.canvas.style.clipPath = `inset(0 0 ${Math.max(0, 100 - blend * 100)}% 0)`;
-      break;
-    case 'dissolve':
-    case 'crossfade':
-    default:
-      outgoingSlot.canvas.style.opacity = String(Math.max(0, 1 - blend));
-      incomingSlot.canvas.style.opacity = String(blend);
-      break;
-  }
-}
-
 function stopLoop() {
   if (rafId != null) {
     cancelAnimationFrame(rafId);
@@ -192,26 +130,15 @@ function stopLoop() {
   }
 }
 
-function activeSlot() {
-  return slots[state.currentSlotKey];
-}
-
-function inactiveSlotKey() {
-  return state.currentSlotKey === 'a' ? 'b' : 'a';
-}
-
 function resetPlaybackState() {
   stopLoop();
+  state.sessionToken += 1;
   state.repo = null;
   state.schedule = [];
   state.currentIndex = 0;
-  state.currentSlotKey = 'a';
   state.slideStartedAtMs = 0;
-  state.transition = null;
-  state.preload = null;
-  slots.a.teardown();
-  slots.b.teardown();
-  showOnlySlot('a');
+  state.advancing = false;
+  playerHost.teardown();
 }
 
 async function ensureRuntime() {
@@ -230,41 +157,9 @@ async function fetchBundle(entry) {
   return fetchBundleFromRepo(state.repo.repoBaseUrl, entry.path);
 }
 
-function beginPreload(entryIndex) {
-  if (state.schedule.length <= 1) {
-    state.preload = null;
-    return;
-  }
-
-  const slotKey = inactiveSlotKey();
-  const preload = {
-    entryIndex,
-    slotKey,
-    ready: false,
-    error: null,
-    promise: null,
-  };
-
-  state.preload = preload;
-  preload.promise = (async () => {
-    const entry = state.schedule[entryIndex];
-    const bundle = await fetchBundle(entry);
-    await slots[slotKey].load(entry, bundle);
-    if (state.preload !== preload) {
-      return;
-    }
-    preload.ready = true;
-  })().catch((error) => {
-    if (state.preload !== preload) {
-      return;
-    }
-    preload.error = error;
-    console.error('[vzglyd] preload failed', error);
-  });
-}
-
 function failPlayback(error) {
   console.error('[vzglyd] playback error', error);
+  state.advancing = false;
   setOverlay(
     'Browser player',
     'Playback error',
@@ -274,24 +169,44 @@ function failPlayback(error) {
   stopLoop();
 }
 
-function finishTransition(timestampMs) {
-  if (!state.transition) {
+async function advanceSlide() {
+  if (state.advancing || state.schedule.length <= 1) {
     return;
   }
 
-  state.currentIndex = state.transition.incomingIndex;
-  state.currentSlotKey = state.transition.incomingSlotKey;
-  state.slideStartedAtMs = timestampMs;
-  state.transition = null;
-  showOnlySlot(state.currentSlotKey);
+  const nextIndex = nextScheduleIndex(state.currentIndex, state.schedule.length);
+  const nextEntry = state.schedule[nextIndex];
+  const sessionToken = state.sessionToken;
 
-  if (state.schedule.length > 1) {
-    beginPreload(nextScheduleIndex(state.currentIndex, state.schedule.length));
+  state.advancing = true;
+
+  try {
+    const bundle = await fetchBundle(nextEntry);
+    if (sessionToken !== state.sessionToken) {
+      return;
+    }
+
+    await playerHost.load(nextEntry, bundle);
+    if (sessionToken !== state.sessionToken) {
+      return;
+    }
+
+    state.currentIndex = nextIndex;
+    state.slideStartedAtMs = performance.now();
+  } catch (error) {
+    if (sessionToken !== state.sessionToken) {
+      return;
+    }
+    failPlayback(error);
+  } finally {
+    if (sessionToken === state.sessionToken) {
+      state.advancing = false;
+    }
   }
 }
 
-function maybeStartTransition(timestampMs) {
-  if (state.transition || state.schedule.length <= 1) {
+function maybeAdvanceSlide(timestampMs) {
+  if (state.advancing || state.schedule.length <= 1) {
     return;
   }
 
@@ -301,69 +216,14 @@ function maybeStartTransition(timestampMs) {
     return;
   }
 
-  const incomingIndex = nextScheduleIndex(state.currentIndex, state.schedule.length);
-  if (!state.preload || state.preload.entryIndex !== incomingIndex) {
-    beginPreload(incomingIndex);
-    return;
-  }
-
-  if (state.preload.error) {
-    throw state.preload.error;
-  }
-
-  if (!state.preload.ready) {
-    return;
-  }
-
-  const incomingEntry = state.schedule[incomingIndex];
-  const kind = resolveTransitionKind(currentEntry, incomingEntry, DEFAULT_TRANSITION);
-
-  if (kind === 'cut') {
-    state.currentIndex = incomingIndex;
-    state.currentSlotKey = state.preload.slotKey;
-    state.slideStartedAtMs = timestampMs;
-    state.preload = null;
-    showOnlySlot(state.currentSlotKey);
-    beginPreload(nextScheduleIndex(state.currentIndex, state.schedule.length));
-    return;
-  }
-
-  state.transition = {
-    outgoingSlotKey: state.currentSlotKey,
-    incomingSlotKey: state.preload.slotKey,
-    incomingIndex,
-    kind,
-    startedAtMs: timestampMs,
-  };
-  state.preload = null;
+  void advanceSlide();
 }
 
 function tick(timestampMs) {
   try {
-    if (state.transition) {
-      const outgoingSlot = slots[state.transition.outgoingSlotKey];
-      const incomingSlot = slots[state.transition.incomingSlotKey];
-
-      outgoingSlot.frame(timestampMs);
-      incomingSlot.frame(timestampMs);
-
-      const progress = Math.min(
-        1,
-        Math.max(0, (timestampMs - state.transition.startedAtMs) / TRANSITION_DURATION_MS),
-      );
-      applyTransition(
-        state.transition.kind,
-        smoothstep(progress),
-        outgoingSlot,
-        incomingSlot,
-      );
-
-      if (progress >= 1) {
-        finishTransition(timestampMs);
-      }
-    } else {
-      activeSlot().frame(timestampMs);
-      maybeStartTransition(timestampMs);
+    if (!state.advancing) {
+      playerHost.frame(timestampMs);
+      maybeAdvanceSlide(timestampMs);
     }
   } catch (error) {
     failPlayback(error);
@@ -380,11 +240,16 @@ function startLoop() {
 
 async function bootPlayer(repoBaseUrl, requestedStartIndex) {
   resetPlaybackState();
+  const sessionToken = state.sessionToken;
   setOverlay('Browser player', 'Loading player', 'Fetching playlist.json...', 'info');
 
   try {
     await ensureRuntime();
     const repo = await loadPlaylistFromRepo(repoBaseUrl);
+    if (sessionToken !== state.sessionToken) {
+      return;
+    }
+
     const schedule = buildPlayableSchedule(repo.playlist);
     if (schedule.length === 0) {
       throw new Error('playlist.json does not contain any enabled slides');
@@ -393,7 +258,6 @@ async function bootPlayer(repoBaseUrl, requestedStartIndex) {
     state.repo = repo;
     state.schedule = schedule;
     state.currentIndex = normalizeStartIndex(requestedStartIndex, schedule.length);
-    state.currentSlotKey = 'a';
 
     try {
       window.localStorage.setItem(REPO_STORAGE_KEY, repo.repoBaseUrl);
@@ -403,20 +267,25 @@ async function bootPlayer(repoBaseUrl, requestedStartIndex) {
 
     const currentEntry = schedule[state.currentIndex];
     const currentBundle = await fetchBundle(currentEntry);
-    await slots.a.load(currentEntry, currentBundle);
+    if (sessionToken !== state.sessionToken) {
+      return;
+    }
+
+    await playerHost.load(currentEntry, currentBundle);
+    if (sessionToken !== state.sessionToken) {
+      return;
+    }
 
     const now = performance.now();
-    slots.a.frame(now);
+    playerHost.frame(now);
     state.slideStartedAtMs = now;
-    showOnlySlot('a');
-
-    if (schedule.length > 1) {
-      beginPreload(nextScheduleIndex(state.currentIndex, schedule.length));
-    }
 
     hideOverlay();
     startLoop();
   } catch (error) {
+    if (sessionToken !== state.sessionToken) {
+      return;
+    }
     failPlayback(error);
   }
 }

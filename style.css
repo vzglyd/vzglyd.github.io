@@ -373,15 +373,11 @@ textarea {
   background: #000;
 }
 
-.view-layer {
-  position: absolute;
-  inset: 0;
+.view-canvas {
   display: block;
   inline-size: 100%;
   block-size: 100%;
   background: #000;
-  opacity: 0;
-  visibility: hidden;
 }
 
 .view-overlay {

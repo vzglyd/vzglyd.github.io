@@ -7,11 +7,9 @@ import {
   nextScheduleIndex,
   normalizeStartIndex,
   resolveDurationSeconds,
-  resolveTransitionKind,
-  smoothstep,
 } from './view_player.js';
 
-test('builds a playable schedule from enabled entries only', () => {
+test('builds a playable schedule from enabled entries and preserves transition metadata', () => {
   const schedule = buildPlayableSchedule({
     defaults: { duration_seconds: 10, transition_in: 'crossfade' },
     slides: [
@@ -70,35 +68,6 @@ test('resolves duration using entry override, then playlist default, then engine
   );
 });
 
-test('resolves transitions using outgoing transition_out, then incoming transition_in, then default', () => {
-  assert.equal(
-    resolveTransitionKind(
-      { transitionOut: 'cut' },
-      { transitionIn: 'wipe_down' },
-      'crossfade',
-    ),
-    'cut',
-  );
-
-  assert.equal(
-    resolveTransitionKind(
-      { transitionOut: null },
-      { transitionIn: 'wipe_down' },
-      'crossfade',
-    ),
-    'wipe_down',
-  );
-
-  assert.equal(
-    resolveTransitionKind(
-      { transitionOut: null },
-      { transitionIn: null },
-      'crossfade',
-    ),
-    'crossfade',
-  );
-});
-
 test('normalizes playback start index against enabled-slide schedule length', () => {
   assert.equal(normalizeStartIndex('2', 5), 2);
   assert.equal(normalizeStartIndex('99', 3), 2);
@@ -109,10 +78,4 @@ test('normalizes playback start index against enabled-slide schedule length', ()
 test('wraps next schedule index when looping', () => {
   assert.equal(nextScheduleIndex(0, 3), 1);
   assert.equal(nextScheduleIndex(2, 3), 0);
-});
-
-test('smoothstep clamps and preserves the midpoint', () => {
-  assert.equal(smoothstep(-1), 0);
-  assert.equal(smoothstep(2), 1);
-  assert.equal(smoothstep(0.5), 0.5);
 });

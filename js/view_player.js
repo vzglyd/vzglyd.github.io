@@ -1,6 +1,4 @@
 export const DEFAULT_SLIDE_DURATION_SECONDS = 7;
-export const DEFAULT_TRANSITION = 'crossfade';
-export const TRANSITION_DURATION_MS = 600;
 
 export function resolveDurationSeconds(
   entry,
@@ -35,17 +33,6 @@ export function buildPlayableSchedule(
   });
 }
 
-export function resolveTransitionKind(
-  outgoingEntry,
-  incomingEntry,
-  defaultTransition = DEFAULT_TRANSITION,
-) {
-  return outgoingEntry?.transitionOut
-    ?? incomingEntry?.transitionIn
-    ?? defaultTransition
-    ?? DEFAULT_TRANSITION;
-}
-
 export function normalizeStartIndex(value, totalSlides) {
   if (!Number.isInteger(totalSlides) || totalSlides <= 0) {
     return 0;
@@ -65,9 +52,4 @@ export function nextScheduleIndex(index, totalSlides) {
   }
 
   return (index + 1) % totalSlides;
-}
-
-export function smoothstep(value) {
-  const t = Math.max(0, Math.min(1, value));
-  return t * t * (3 - (2 * t));
 }
