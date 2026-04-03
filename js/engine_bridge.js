@@ -193,6 +193,7 @@ export class EngineBridge {
     this._slideName = '';
     this._manifestName = '';
     this._lastError = null;
+    this._gpuState = null;
     this._compiledSceneMeshes = [];
     this._compiledSceneCameraPath = null;
     this._compiledSceneLighting = null;
@@ -274,8 +275,9 @@ export class EngineBridge {
         spec.lighting = toWorldLightingSpec(this._compiledSceneLighting, spec.lighting);
       }
       
-      const renderer = new VzglydRenderer(this._canvas, spec);
+      const renderer = new VzglydRenderer(this._canvas, spec, this._gpuState);
       await renderer.init();
+      this._gpuState = renderer.gpuState();
 
       renderer.applyOverlayBytes(slideHost.readOverlayBytes());
       renderer.applyDynamicMeshBytes(slideHost.readDynamicMeshBytes());

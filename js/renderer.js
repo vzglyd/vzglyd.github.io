@@ -843,14 +843,16 @@ export class VzglydRenderer {
   /**
    * @param {HTMLCanvasElement} canvas
    * @param {object}            spec     decoded SlideSpec
+   * @param {object|null}       gpuState reusable WebGPU state for this canvas
    */
-  constructor(canvas, spec) {
+  constructor(canvas, spec, gpuState = null) {
     this._canvas   = canvas;
     this._spec     = spec;
-    this._device   = null;
-    this._queue    = null;
-    this._context  = null;
-    this._format   = null;
+    this._adapter  = gpuState?.adapter ?? null;
+    this._device   = gpuState?.device ?? null;
+    this._queue    = gpuState?.queue ?? null;
+    this._context  = gpuState?.context ?? null;
+    this._format   = gpuState?.format ?? null;
 
     this._uniformBuf  = null;
     this._bindGroup   = null;
@@ -870,26 +872,39 @@ export class VzglydRenderer {
 
   /** Must be called before render(). Returns false if WebGPU is unavailable. */
   async init() {
-    const adapter =
-      await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }) ??
-      await navigator.gpu.requestAdapter() ??
-      await navigator.gpu.requestAdapter({ forceFallbackAdapter: true });
-    if (!adapter) throw new Error(
-      'WebGPU adapter unavailable. Make sure hardware acceleration is enabled ' +
-      '(edge://settings/system) and you are on Edge 113+, Chrome 113+, or Safari 18+.'
-    );
+    if (!this._device || !this._queue || !this._context || !this._format) {
+      this._adapter =
+        await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }) ??
+        await navigator.gpu.requestAdapter() ??
+        await navigator.gpu.requestAdapter({ forceFallbackAdapter: true });
+      if (!this._adapter) throw new Error(
+        'WebGPU adapter unavailable. Make sure hardware acceleration is enabled ' +
+        '(edge://settings/system) and you are on Edge 113+, Chrome 113+, or Safari 18+.'
+      );
 
-    this._device = await adapter.requestDevice();
-    this._queue  = this._device.queue;
+      this._device = await this._adapter.requestDevice();
+      this._queue  = this._device.queue;
 
-    this._context = this._canvas.getContext('webgpu');
-    this._format  = navigator.gpu.getPreferredCanvasFormat();
+      this._context = this._canvas.getContext('webgpu');
+      this._format  = navigator.gpu.getPreferredCanvasFormat();
+    }
+
     this._context.configure({ device: this._device, format: this._format, alphaMode: 'opaque' });
 
     // Expose device globally so tests/debug tools can read back pixels.
     window.__vzglyd_device = this._device;
 
     await this._buildResources();
+  }
+
+  gpuState() {
+    return {
+      adapter: this._adapter,
+      device: this._device,
+      queue: this._queue,
+      context: this._context,
+      format: this._format,
+    };
   }
 
   async _buildResources() {
