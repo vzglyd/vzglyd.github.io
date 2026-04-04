@@ -23,12 +23,17 @@ self.onmessage = async (event) => {
       },
       networkPolicy: data.networkPolicy ?? 'any_https',
       endpointMap: data.endpointMap ?? {},
+      traceThread: data.traceThread ?? 'sidecar:guest',
+      traceCategory: 'guest.sidecar',
       blockingSleep: sleepView ? blockingSleep : null,
       onChannelPush(bytes) {
         self.postMessage({ type: 'channel_push', bytes }, [bytes.buffer]);
       },
       onLog(message) {
         self.postMessage({ type: 'log', message });
+      },
+      onTrace(eventPayload) {
+        self.postMessage({ type: 'trace', event: eventPayload });
       },
     });
 

@@ -7,15 +7,16 @@ import {
   nextScheduleIndex,
   normalizeStartIndex,
 } from './js/view_player.js';
+import { syncCanvasToContainer } from './js/canvas_sizing.js';
 
 const REPO_STORAGE_KEY = 'vzglyd.shared_repo_url';
-const RENDER_WIDTH = 640;
-const RENDER_HEIGHT = 480;
 
 const overlay = document.getElementById('view-overlay');
 const overlayKicker = document.getElementById('view-overlay-kicker');
 const overlayTitle = document.getElementById('view-overlay-title');
 const overlayText = document.getElementById('view-overlay-text');
+const traceToggle = document.getElementById('view-trace-toggle');
+const traceStatus = document.getElementById('view-trace-status');
 
 let runtimeModulePromise = null;
 let WebHostCtor = null;
@@ -29,15 +30,35 @@ const state = {
   advancing: false,
   sessionToken: 0,
 };
+let autoTraceStarted = false;
+
+function parseTraceFlag(value) {
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function traceConfigFromUrl(pageLabel) {
+  const url = new URL(window.location.href);
+  return {
+    enabled: true,
+    label: url.searchParams.get('traceLabel') ?? pageLabel,
+    autoStart: parseTraceFlag(url.searchParams.get('trace')),
+  };
+}
+
+const traceConfig = traceConfigFromUrl('web-view');
 
 class HostSlot {
-  constructor(canvas, size) {
+  constructor(canvas, stage) {
     this.canvas = canvas;
-    sizeCanvas(this.canvas, size);
+    this.stage = stage;
     this.host = null;
     this.entry = null;
     this.bundleUrl = '';
     this.loadToken = 0;
+    this.resizeObserver = null;
+
+    this.syncSize();
+    this.bindResize();
   }
 
   async ensureHost() {
@@ -45,6 +66,7 @@ class HostSlot {
     if (!this.host) {
       this.host = new WebHostCtor(this.canvas, {
         networkPolicy: 'any_https',
+        trace: traceConfig,
       });
     }
   }
@@ -54,6 +76,8 @@ class HostSlot {
     await this.ensureHost();
     await this.host.loadBundle(bundle.bytes, {
       params: entry.params ?? null,
+      slideIndex: state.currentIndex,
+      slidePath: entry.path ?? '',
     });
 
     if (token !== this.loadToken) {
@@ -89,16 +113,105 @@ class HostSlot {
 
     this.host = null;
   }
+
+  syncSize() {
+    syncCanvasToContainer(this.canvas, this.stage);
+  }
+
+  bindResize() {
+    const update = () => this.syncSize();
+    window.addEventListener('resize', update, { passive: true });
+
+    if (typeof ResizeObserver === 'function') {
+      this.resizeObserver = new ResizeObserver(() => update());
+      this.resizeObserver.observe(this.stage);
+    }
+  }
 }
 
-const playerHost = new HostSlot(document.getElementById('view-canvas'), {
-  width: RENDER_WIDTH,
-  height: RENDER_HEIGHT,
-});
+const playerHost = new HostSlot(
+  document.getElementById('view-canvas'),
+  document.querySelector('.view-stage'),
+);
 
-function sizeCanvas(canvas, size) {
-  canvas.width = size.width;
-  canvas.height = size.height;
+function currentTraceMetadata() {
+  const currentEntry = state.schedule[state.currentIndex];
+  return {
+    page: 'view',
+    repo: state.repo?.repoBaseUrl ?? '',
+    slide_index: state.currentIndex,
+    slide_path: currentEntry?.path ?? '',
+    bundle_url: playerHost.bundleUrl,
+  };
+}
+
+function sanitizeTraceName(value) {
+  const sanitized = String(value ?? '')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return sanitized || 'session';
+}
+
+function buildTraceFilename() {
+  const currentEntry = state.schedule[state.currentIndex];
+  const source = currentEntry?.path || playerHost.host?.stats?.()?.slideName || 'session';
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `vzglyd-web-${sanitizeTraceName(source)}-${timestamp}.perfetto.json`;
+}
+
+function syncTraceUi(message = null) {
+  const capturing = Boolean(playerHost.host?.stats?.()?.traceCapturing);
+  traceToggle.textContent = capturing ? 'Stop & Download' : 'Start Trace';
+  traceStatus.textContent = message ?? (capturing ? 'Capturing trace…' : 'Trace idle');
+}
+
+async function toggleTraceCapture() {
+  try {
+    await playerHost.ensureHost();
+    const capturing = Boolean(playerHost.host?.stats?.()?.traceCapturing);
+    if (!capturing) {
+      const started = playerHost.host?.startTraceCapture?.(currentTraceMetadata()) ?? false;
+      syncTraceUi(started ? 'Capturing trace…' : 'Trace unavailable');
+      return;
+    }
+
+    playerHost.host?.stopTraceCapture?.(currentTraceMetadata());
+    const filename = buildTraceFilename();
+    const downloaded = playerHost.host?.downloadTrace?.(filename) ?? false;
+    syncTraceUi(downloaded ? `Downloaded ${filename}` : 'Trace ready');
+  } catch (error) {
+    console.error('[vzglyd] trace capture failed', error);
+    syncTraceUi('Trace capture failed');
+  }
+}
+
+function installTraceTools() {
+  syncTraceUi();
+  traceToggle.addEventListener('click', () => {
+    void toggleTraceCapture();
+  });
+
+  window.vzglydTrace = {
+    startCapture(extraMetadata = {}) {
+      return playerHost.host?.startTraceCapture?.({
+        ...currentTraceMetadata(),
+        ...extraMetadata,
+      }) ?? false;
+    },
+    stopCapture(extraMetadata = {}) {
+      return playerHost.host?.stopTraceCapture?.({
+        ...currentTraceMetadata(),
+        ...extraMetadata,
+      }) ?? false;
+    },
+    exportTrace() {
+      return playerHost.host?.exportTrace?.() ?? null;
+    },
+    downloadTrace(filename = buildTraceFilename()) {
+      return playerHost.host?.downloadTrace?.(filename) ?? false;
+    },
+  };
 }
 
 function setOverlay(kicker, title, text, tone = 'info') {
@@ -130,6 +243,7 @@ function resetPlaybackState() {
   state.slideStartedAtMs = 0;
   state.advancing = false;
   playerHost.teardown();
+  syncTraceUi();
 }
 
 async function ensureRuntime() {
@@ -236,6 +350,16 @@ async function bootPlayer(repoBaseUrl, requestedStartIndex) {
 
   try {
     await ensureRuntime();
+    await playerHost.ensureHost();
+    if (traceConfig.autoStart && !autoTraceStarted) {
+      playerHost.host?.startTraceCapture?.({
+        ...currentTraceMetadata(),
+        trigger: 'auto',
+      });
+      autoTraceStarted = true;
+      syncTraceUi('Capturing trace…');
+    }
+
     const repo = await loadPlaylistFromRepo(repoBaseUrl);
     if (sessionToken !== state.sessionToken) {
       return;
@@ -272,6 +396,7 @@ async function bootPlayer(repoBaseUrl, requestedStartIndex) {
     state.slideStartedAtMs = now;
 
     hideOverlay();
+    syncTraceUi();
     startLoop();
   } catch (error) {
     if (sessionToken !== state.sessionToken) {
@@ -282,6 +407,7 @@ async function bootPlayer(repoBaseUrl, requestedStartIndex) {
 }
 
 function boot() {
+  installTraceTools();
   const url = new URL(window.location.href);
   let savedRepo = null;
   try {
