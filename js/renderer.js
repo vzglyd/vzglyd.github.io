@@ -643,6 +643,28 @@ export function normalizeCustomShaderBody(shaders) {
   };
 }
 
+export function fingerprintRuntimeBytes(bytes) {
+  if (!(bytes instanceof Uint8Array)) {
+    return null;
+  }
+
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= bytes[i];
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return `${bytes.length}:${hash.toString(16).padStart(8, '0')}`;
+}
+
+export function shouldUploadRuntimeBytes(previousFingerprint, bytes) {
+  const fingerprint = fingerprintRuntimeBytes(bytes);
+  return {
+    fingerprint,
+    shouldUpload: fingerprint !== null && fingerprint !== previousFingerprint,
+  };
+}
+
 function resolveCustomShaderSource(prelude, shaders) {
   const normalized = normalizeCustomShaderBody(shaders);
   if (!normalized.body || normalized.error) return { ...normalized, source: null };
@@ -860,6 +882,8 @@ export class VzglydRenderer {
     this._staticBufs  = [];  // [{ vertex, index, indexCount }]
     this._dynamicBufs = [];  // [{ vertex, index, indexCount }]
     this._overlayBuf  = null;
+    this._overlayFingerprint = null;
+    this._dynamicMeshFingerprint = null;
     this._backgroundWorld = null;
 
     this._elapsed       = 0;
@@ -1190,9 +1214,19 @@ export class VzglydRenderer {
    * @param {Uint8Array|null} overlayBytes
    */
   applyOverlayBytes(overlayBytes) {
-    if (!overlayBytes) return;
+    const { fingerprint, shouldUpload } = shouldUploadRuntimeBytes(
+      this._overlayFingerprint,
+      overlayBytes,
+    );
+    if (!shouldUpload) return false;
+
     const overlay = decodeRuntimeOverlayBytes(overlayBytes, this._spec.scene_space);
-    if (!overlay || overlay.vertices.length === 0) { this._overlayBuf = null; return; }
+    if (!overlay || overlay.vertices.length === 0) {
+      const hadOverlay = Boolean(this._overlayBuf && this._overlayBuf.indexCount > 0);
+      this._overlayBuf = null;
+      this._overlayFingerprint = fingerprint;
+      return hadOverlay;
+    }
 
     const verts   = packVertices(overlay.vertices, this._spec.scene_space);
     const indices = packIndices(overlay.indices);
@@ -1209,6 +1243,9 @@ export class VzglydRenderer {
       device.queue.writeBuffer(this._overlayBuf.index,  0, indices);
       this._overlayBuf.indexCount = indices.length;
     }
+
+    this._overlayFingerprint = fingerprint;
+    return true;
   }
 
   /**
@@ -1216,9 +1253,15 @@ export class VzglydRenderer {
    * @param {Uint8Array|null} meshBytes
    */
   applyDynamicMeshBytes(meshBytes) {
-    if (!meshBytes) return;
+    const { fingerprint, shouldUpload } = shouldUploadRuntimeBytes(
+      this._dynamicMeshFingerprint,
+      meshBytes,
+    );
+    if (!shouldUpload) return false;
+
     const meshSet = decodeRuntimeMeshSet(meshBytes, this._spec.scene_space);
     const stride  = this._spec.scene_space === 'Screen2D' ? 40 : 44;
+    let wroteMeshBuffer = false;
 
     for (const rm of meshSet.meshes) {
       const buf = this._dynamicBufs[rm.mesh_index];
@@ -1226,7 +1269,11 @@ export class VzglydRenderer {
       const verts = packVertices(rm.vertices, this._spec.scene_space);
       this._device.queue.writeBuffer(buf.vertex, 0, verts);
       buf.activeIndexCount = Math.min(rm.index_count, buf.indexCount);
+      wroteMeshBuffer = true;
     }
+
+    this._dynamicMeshFingerprint = fingerprint;
+    return wroteMeshBuffer;
   }
 
   // ── Uniform updates ────────────────────────────────────────────────────────

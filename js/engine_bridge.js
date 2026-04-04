@@ -1,4 +1,5 @@
 import { decodeSlideSpec } from './postcard.js';
+import { createFrameStats, recordFrameStats } from './frame_stats.js';
 import { VzglydRenderer } from './renderer.js';
 import { VzglydWasmHost } from './wasm-host.js';
 import { asUint8Array, unpackBundle } from './bundle_manifest.js';
@@ -12,6 +13,19 @@ function encodeRuntimeParams(params) {
     return null;
   }
   return TEXT_ENCODER.encode(JSON.stringify(params));
+}
+
+function nowMs() {
+  return performance.now();
+}
+
+function measureCall(fn) {
+  const startMs = nowMs();
+  const result = fn();
+  return {
+    result,
+    durationMs: nowMs() - startMs,
+  };
 }
 
 function toWorldLightingSpec(compiledLighting, fallbackLighting = null) {
@@ -197,6 +211,7 @@ export class EngineBridge {
     this._compiledSceneMeshes = [];
     this._compiledSceneCameraPath = null;
     this._compiledSceneLighting = null;
+    this._frameStats = createFrameStats();
   }
 
   async loadBundle(bundleBytes, runtimeOptions = null) {
@@ -278,6 +293,7 @@ export class EngineBridge {
       const renderer = new VzglydRenderer(this._canvas, spec, this._gpuState);
       await renderer.init();
       this._gpuState = renderer.gpuState();
+      this._frameStats = createFrameStats();
 
       renderer.applyOverlayBytes(slideHost.readOverlayBytes());
       renderer.applyDynamicMeshBytes(slideHost.readDynamicMeshBytes());
@@ -406,13 +422,36 @@ export class EngineBridge {
       : Math.max(0, Math.min(0.25, (timestampMs - this._lastTimestampMs) / 1000));
     this._lastTimestampMs = timestampMs;
 
-    const runtimeStatus = this._slideHost.update(dt);
+    const updateSample = measureCall(() => this._slideHost.update(dt));
+    const runtimeStatus = updateSample.result;
+    let overlayUploadMs = 0;
+    let dynamicUploadMs = 0;
+    let overlayUploaded = false;
+    let dynamicUploaded = false;
+
     if (runtimeStatus !== 0) {
-      this._renderer.applyOverlayBytes(this._slideHost.readOverlayBytes());
-      this._renderer.applyDynamicMeshBytes(this._slideHost.readDynamicMeshBytes());
+      const overlaySample = measureCall(() =>
+        this._renderer.applyOverlayBytes(this._slideHost.readOverlayBytes()),
+      );
+      overlayUploadMs = overlaySample.durationMs;
+      overlayUploaded = overlaySample.result;
+
+      const dynamicSample = measureCall(() =>
+        this._renderer.applyDynamicMeshBytes(this._slideHost.readDynamicMeshBytes()),
+      );
+      dynamicUploadMs = dynamicSample.durationMs;
+      dynamicUploaded = dynamicSample.result;
     }
 
-    this._renderer.renderFrame(dt);
+    const renderSample = measureCall(() => this._renderer.renderFrame(dt));
+    recordFrameStats(this._frameStats, {
+      updateMs: updateSample.durationMs,
+      overlayUploadMs,
+      dynamicUploadMs,
+      renderMs: renderSample.durationMs,
+      overlayUploaded,
+      dynamicUploaded,
+    });
   }
 
   teardown() {
@@ -436,6 +475,7 @@ export class EngineBridge {
     this._compiledSceneMeshes = [];
     this._compiledSceneCameraPath = null;
     this._compiledSceneLighting = null;
+    this._frameStats = createFrameStats();
   }
 
   stats() {
@@ -447,6 +487,7 @@ export class EngineBridge {
       manifestName: this._manifestName,
       sidecarActive: Boolean(this._sidecarHost),
       lastError: this._lastError,
+      ...this._frameStats,
     };
   }
 }
