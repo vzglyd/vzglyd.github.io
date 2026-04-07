@@ -80,6 +80,16 @@ export function loadGlbScene(glb_bytes: Uint8Array, scene_path: string, scene_re
  */
 export function main(): void;
 
+/**
+ * Maximum display duration exposed to JS so it isn't hardcoded in multiple places.
+ */
+export function maxDisplayDurationSeconds(): number;
+
+/**
+ * Minimum display duration exposed to JS so it isn't hardcoded in multiple places.
+ */
+export function minDisplayDurationSeconds(): number;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -89,6 +99,8 @@ export interface InitOutput {
     readonly loadGlbScene: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly __wbg_webhost_free: (a: number, b: number) => void;
     readonly main: () => void;
+    readonly maxDisplayDurationSeconds: () => number;
+    readonly minDisplayDurationSeconds: () => number;
     readonly webhost_downloadTrace: (a: number, b: number, c: number) => number;
     readonly webhost_exportTrace: (a: number) => any;
     readonly webhost_frame: (a: number, b: number) => [number, number];

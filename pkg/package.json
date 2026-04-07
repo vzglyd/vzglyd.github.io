@@ -6,7 +6,7 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/vzglyd/vzglyd"
+    "url": "https://github.com/vzglyd/VRX-64-web"
   },
   "files": [
     "vzglyd_web_bg.wasm",
