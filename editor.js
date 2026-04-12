@@ -3,10 +3,12 @@ import {
   emptyEditableEntry,
   loadBundleManifestFromRepo,
   loadPlaylistFromRepo,
+  loadSecretsFromRepo,
   normalizeRepoBaseUrl,
   parseParamsText,
   serializeEditablePlaylist,
   stringifyPlaylist,
+  stringifySecrets,
   toEditablePlaylist,
 } from './js/playlist_repo.js';
 import {
@@ -38,6 +40,12 @@ const statusText = document.getElementById('status-text');
 const errorBox = document.getElementById('error-box');
 const errorText = document.getElementById('error-text');
 const errorDismiss = document.getElementById('error-dismiss');
+const secretsShell = document.getElementById('secrets-shell');
+const secretsList = document.getElementById('secrets-list');
+const secretsNewKey = document.getElementById('secrets-new-key');
+const secretsNewValue = document.getElementById('secrets-new-value');
+const secretsAddBtn = document.getElementById('secrets-add-btn');
+const secretsDownloadBtn = document.getElementById('secrets-download-btn');
 
 const state = {
   repoBaseUrl: null,
@@ -46,6 +54,7 @@ const state = {
   renderedJson: '',
   loadedJson: '',
   metadataRequestId: 0,
+  secrets: null,  // null = not loaded; {} = loaded (may be empty)
 };
 
 function setStatus(message, spinning = false) {
@@ -68,6 +77,43 @@ function showError(message) {
 function hideError() {
   errorBox.hidden = true;
   errorText.textContent = '';
+}
+
+function renderSecretsPanel() {
+  if (state.secrets === null) {
+    secretsShell.hidden = true;
+    return;
+  }
+
+  secretsShell.hidden = false;
+  secretsList.replaceChildren();
+
+  const entries = Object.entries(state.secrets);
+  if (entries.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'hint';
+    empty.textContent = 'No secrets stored. Add a key/value pair below.';
+    secretsList.appendChild(empty);
+  } else {
+    for (const [key] of entries) {
+      const row = document.createElement('div');
+      row.className = 'secrets-row';
+      row.innerHTML = `
+        <code class="secrets-key">${escapeHtml(key)}</code>
+        <span class="secrets-value">••••••••</span>
+        <button class="secondary-btn secrets-remove-btn" data-key="${escapeHtml(key)}" type="button">Remove</button>
+      `;
+      secretsList.appendChild(row);
+    }
+  }
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function buildTransitionOptions() {
@@ -340,11 +386,36 @@ function describeManifestBadges(entry) {
   if (manifest.display?.duration_seconds != null) badges.push(`bundle ${manifest.display.duration_seconds}s`);
   if (manifest.display?.transition_in) badges.push(`in:${manifest.display.transition_in}`);
   if (manifest.display?.transition_out) badges.push(`out:${manifest.display.transition_out}`);
+  if (manifest.assets?.art) badges.push('cassette art');
   if (manifest.params?.fields?.length) {
     badges.push(`${manifest.params.fields.length} param field${manifest.params.fields.length === 1 ? '' : 's'}`);
   }
 
   return badges;
+}
+
+function buildCassetteArtSummary(manifest) {
+  const art = manifest?.assets?.art;
+  if (!art) return null;
+
+  const shell = document.createElement('div');
+  shell.className = 'cassette-art-summary';
+  const items = [
+    ['J-card', art.j_card],
+    ['Side A', art.side_a_label],
+    ['Side B', art.side_b_label],
+  ];
+  for (const [label, ref] of items) {
+    const item = document.createElement('div');
+    item.className = 'cassette-art-chip';
+    const title = document.createElement('span');
+    title.textContent = label;
+    const path = document.createElement('code');
+    path.textContent = ref.path;
+    item.append(title, path);
+    shell.append(item);
+  }
+  return shell;
 }
 
 function buildManifestSummary(entry) {
@@ -387,6 +458,11 @@ function buildManifestSummary(entry) {
   const description = entry.bundle_manifest.description || entry.bundle_url;
   if (description) {
     shell.append(createFieldNote(description));
+  }
+
+  const cassetteArt = buildCassetteArtSummary(entry.bundle_manifest);
+  if (cassetteArt) {
+    shell.append(cassetteArt);
   }
 
   return shell;
@@ -756,7 +832,19 @@ async function loadRepo() {
 
     repoUrlInput.value = repo.repoBaseUrl;
     window.localStorage.setItem(REPO_STORAGE_KEY, repo.repoBaseUrl);
+
+    // Try to load secrets.json (graceful — 404 means none saved yet)
+    try {
+      setStatus('Fetching secrets.json...', true);
+      const secretsResult = await loadSecretsFromRepo(repo.repoBaseUrl);
+      state.secrets = secretsResult ? secretsResult.secrets : {};
+    } catch {
+      // Non-fatal: show the panel empty so user can create secrets
+      state.secrets = {};
+    }
+
     renderEditor();
+    renderSecretsPanel();
     await hydrateBundleMetadata();
   } catch (error) {
     showError(error.message);
@@ -924,6 +1012,45 @@ function installHandlers() {
   });
 
   errorDismiss.addEventListener('click', hideError);
+
+  secretsAddBtn.addEventListener('click', () => {
+    const key = secretsNewKey.value.trim();
+    const value = secretsNewValue.value;
+    if (!key) {
+      showError('Secret key must not be empty');
+      return;
+    }
+    if (state.secrets === null) {
+      state.secrets = {};
+    }
+    state.secrets[key] = value;
+    secretsNewKey.value = '';
+    secretsNewValue.value = '';
+    renderSecretsPanel();
+  });
+
+  secretsList.addEventListener('click', (event) => {
+    const btn = event.target.closest('.secrets-remove-btn');
+    if (!btn || state.secrets === null) return;
+    const key = btn.dataset.key;
+    if (key !== undefined) {
+      delete state.secrets[key];
+      renderSecretsPanel();
+    }
+  });
+
+  secretsDownloadBtn.addEventListener('click', () => {
+    if (state.secrets === null) return;
+    const json = stringifySecrets(state.secrets);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'secrets.json';
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus('secrets.json downloaded. Keep this file out of version control.', false);
+  });
 }
 
 function boot() {
