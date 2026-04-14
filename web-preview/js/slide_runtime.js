@@ -106,23 +106,65 @@ function toWorldDraw(mesh, meshIndex) {
 }
 
 function attachHybridWorldBackground(spec, compiledMeshes, compiledCameraPath, compiledLighting) {
-  const static_meshes = compiledMeshes.map(toWorldStaticMesh);
-  const draws = compiledMeshes.map((mesh, index) => toWorldDraw(mesh, index));
+  // Match native compile_authored_scene_into_spec: merge GLB meshes into the spec
+  // and change scene_space to World3D (not a separate background layer).
+  const preservedStaticMeshes = spec.static_meshes.slice();
+  const preservedStaticDraws = spec.draws.filter(d => d.source?.kind === 'Static');
+  const preservedDynamicDraws = spec.draws.filter(d => d.source?.kind === 'Dynamic');
 
-  spec.background_world = {
-    name: `${spec.name}_background_world`,
-    scene_space: 'World3D',
-    camera_path: compiledCameraPath ?? spec.camera_path,
-    lighting: toWorldLightingSpec(compiledLighting, spec.lighting),
-    shaders: null,
-    overlay: null,
-    font: null,
-    textures_used: 0,
-    textures: [],
-    static_meshes,
-    dynamic_meshes: [],
-    draws,
-  };
+  const staticMeshes = [];
+  const opaqueDraws = [];
+  const transparentDraws = [];
+
+  for (const mesh of compiledMeshes) {
+    const pipeline = mesh.pipeline === 'transparent' ? 'Transparent' : 'Opaque';
+    const meshIndex = staticMeshes.length;
+    staticMeshes.push(toWorldStaticMesh(mesh));
+    const draw = {
+      label: mesh.label || mesh.id,
+      source: { kind: 'Static', index: meshIndex },
+      pipeline,
+      index_range: { start: 0, end: mesh.indices.length },
+    };
+    if (pipeline === 'Opaque') opaqueDraws.push(draw);
+    else transparentDraws.push(draw);
+  }
+
+  // Append preserved meshes with offset indices
+  const preservedOffset = staticMeshes.length;
+  for (const draw of preservedStaticDraws) {
+    const newDraw = {
+      ...draw,
+      source: { kind: 'Static', index: draw.source.index + preservedOffset },
+    };
+    if (draw.pipeline === 'Opaque') opaqueDraws.push(newDraw);
+    else transparentDraws.push(newDraw);
+  }
+
+  staticMeshes.push(...preservedStaticMeshes);
+
+  // Opaque first, then transparent (matches native ordering)
+  spec.static_meshes = staticMeshes;
+  spec.draws = [...opaqueDraws, ...transparentDraws];
+
+  // Apply camera path and lighting from GLB
+  if (compiledCameraPath) {
+    spec.camera_path = compiledCameraPath;
+  }
+  if (compiledLighting) {
+    spec.lighting = toWorldLightingSpec(compiledLighting, spec.lighting);
+  }
+
+  // Ensure World3D textures exist (native ensure_compiled_scene_textures)
+  while (spec.textures.length < 4) {
+    spec.textures.push(null);
+  }
+
+  // Change to World3D like native does
+  spec.scene_space = 'World3D';
+
+  console.log('[vzglyd] Compiled scene merged into spec: ' +
+    `${spec.static_meshes.length} meshes, ${spec.draws.length} draws, scene_space=World3D`);
 }
 
 function requiresAuthoredSceneCompilation(manifest) {

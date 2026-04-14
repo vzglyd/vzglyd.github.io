@@ -1349,17 +1349,6 @@ export class VzglydRenderer {
     const device = this._device;
     const spec   = this._spec;
 
-    // When a Screen2D slide has a hybrid world background and custom shaders,
-    // the shader is likely a World3D shader — use World3D contract instead.
-    const hasWorldBackground = !!this._backgroundWorld;
-    const useWorldContract = hasWorldBackground && (spec.shaders?.vertex_wgsl || spec.shaders?.fragment_wgsl);
-
-    if (useWorldContract) {
-      console.log('[vzglyd] Screen2D slide with world background + custom shader — using World3D shader contract');
-      await this._buildWorld3DResources(views, samplers);
-      return;
-    }
-
     // Uniform buffer: 16 bytes (time + 3 pads)
     this._uniformBuf = device.createBuffer({
       label: 'screen2d_uniforms',
