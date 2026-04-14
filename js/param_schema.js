@@ -101,13 +101,14 @@ export function normalizeParamSchema(schema, label = 'manifest.params') {
   if (!isPlainObject(schema)) {
     throw new Error(`${label} must be an object`);
   }
-  if (!Array.isArray(schema.fields)) {
+  const fields = Array.isArray(schema.fields) ? schema.fields : [];
+  if (schema.fields !== undefined && !Array.isArray(schema.fields)) {
     throw new Error(`${label}.fields must be an array`);
   }
 
   const seenKeys = new Set();
   return {
-    fields: schema.fields.map((field, index) => {
+    fields: fields.map((field, index) => {
       if (!isPlainObject(field)) {
         throw new Error(`${label}.fields[${index}] must be an object`);
       }
