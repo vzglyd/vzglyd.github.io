@@ -519,7 +519,7 @@ export class VzglydWasmHost extends BaseWasmHost {
     for (const mesh of this._compiledSceneMeshes) {
       spaceNeeded += MESH_HEADER_SIZE + 8; // header + align
       spaceNeeded += mesh.vertices.length * 48 + 8; // vertices + align
-      spaceNeeded += mesh.indices.length * 2 + 8; // indices + align
+      spaceNeeded += mesh.indices.length * 4 + 8; // indices (u32) + align
       spaceNeeded += (mesh.label?.length || mesh.id.length) + 8; // label + align
       spaceNeeded += DRAW_SIZE + 8; // draw + align
     }
@@ -584,10 +584,10 @@ export class VzglydWasmHost extends BaseWasmHost {
       writePtr += vertexBytes.length;
       writePtr = Math.ceil(writePtr / 8) * 8;
       
-      const indexBytes = new Uint8Array(mesh.indices.length * 2);
+      const indexBytes = new Uint8Array(mesh.indices.length * 4);
       const indexView = new DataView(indexBytes.buffer);
       for (let j = 0; j < mesh.indices.length; j++) {
-        indexView.setUint16(j * 2, mesh.indices[j], true);
+        indexView.setUint32(j * 4, mesh.indices[j], true);
       }
       memU8.set(indexBytes, writePtr);
       memView.setUint32(meshHeaderPtr + 20, writePtr, true);

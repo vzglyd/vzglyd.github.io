@@ -1,4 +1,4 @@
-import{C as e,S as t,_ as n,a as r,b as i,c as a,d as o,f as s,g as c,h as l,l as u,m as d,o as f,p,r as m,s as h,t as g,u as _,v,x as y,y as b}from"./chunks/playlist_repo-BXLvZae2.js";function x(){return(0,S.jsx)(`div`,{dangerouslySetInnerHTML:{__html:C}})}var S,C,w=e((()=>{S=b(),C=String.raw`
+import{C as e,S as t,_ as n,a as r,b as i,c as a,d as o,f as s,g as c,h as l,l as u,m as d,o as f,p,r as m,s as h,t as g,u as _,v,x as y,y as b}from"./chunks/playlist_repo-BByEW9Lj.js";function x(){return(0,S.jsx)(`div`,{dangerouslySetInnerHTML:{__html:C}})}var S,C,w=e((()=>{S=b(),C=String.raw`
 <div id="app">
     <header class="hero">
       <div>

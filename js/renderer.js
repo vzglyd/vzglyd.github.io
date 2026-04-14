@@ -462,13 +462,13 @@ function createVertexBuffer(device, floatData, label) {
   return buf;
 }
 
-function createIndexBuffer(device, uint16Data, label) {
+function createIndexBuffer(device, uint32Data, label) {
   const buf = device.createBuffer({
     label,
-    size:  Math.ceil(uint16Data.byteLength / 4) * 4, // 4-byte alignment
+    size:  Math.ceil(uint32Data.byteLength / 4) * 4, // 4-byte alignment
     usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(buf, 0, uint16Data);
+  device.queue.writeBuffer(buf, 0, uint32Data);
   return buf;
 }
 
@@ -1879,7 +1879,7 @@ export class VzglydRenderer {
       }
 
       renderPass.setVertexBuffer(0, buf.vertex);
-      renderPass.setIndexBuffer(buf.index, 'uint16');
+      renderPass.setIndexBuffer(buf.index, 'uint32');
       const count = kind === 'Dynamic'
         ? (buf.activeIndexCount ?? buf.indexCount)
         : buf.indexCount;
@@ -1971,7 +1971,7 @@ export class VzglydRenderer {
       renderPass.setPipeline(this._pipelines.Transparent);
       renderPass.setBindGroup(0, this._bindGroup);
       renderPass.setVertexBuffer(0, this._overlayBuf.vertex);
-      renderPass.setIndexBuffer(this._overlayBuf.index, 'uint16');
+      renderPass.setIndexBuffer(this._overlayBuf.index, 'uint32');
       renderPass.drawIndexed(this._overlayBuf.indexCount);
     }
 

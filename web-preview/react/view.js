@@ -1,4 +1,4 @@
-import{C as e,S as t,a as n,b as r,i,s as a,x as o,y as s}from"./chunks/playlist_repo-BXLvZae2.js";import{n as c,t as l}from"./chunks/preload-helper-CSNeeHw8.js";function u(){return(0,d.jsx)(`div`,{dangerouslySetInnerHTML:{__html:f}})}var d,f,p=e((()=>{d=s(),f=String.raw`
+import{C as e,S as t,a as n,b as r,i,s as a,x as o,y as s}from"./chunks/playlist_repo-BByEW9Lj.js";import{n as c,t as l}from"./chunks/preload-helper-RI-QsegW.js";function u(){return(0,d.jsx)(`div`,{dangerouslySetInnerHTML:{__html:f}})}var d,f,p=e((()=>{d=s(),f=String.raw`
 <div id="app" class="view-app">
     <main class="view-shell" aria-label="Slide player">
       <div class="view-trace-controls" aria-label="Trace capture controls">

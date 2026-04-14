@@ -273,9 +273,9 @@ function packVertices(verts, sceneSpace) {
     : packWorldVertices(verts);
 }
 
-/** Pack a u16 index array into a Uint16Array for WebGPU. */
+/** Pack a u32 index array into a Uint32Array for WebGPU. */
 function packIndices(indices) {
-  const buf = new Uint16Array(indices.length);
+  const buf = new Uint32Array(indices.length);
   for (let i = 0; i < indices.length; i++) buf[i] = indices[i];
   return buf;
 }
@@ -283,7 +283,7 @@ function packIndices(indices) {
 function decodeStaticMesh(d, sceneSpace) {
   const label    = d.string();
   const vertices = d.vec(sceneSpace === 'Screen2D' ? decodeScreenVertex : decodeWorldVertex);
-  // Vec<u16> — each u16 is varint-encoded in postcard
+  // Vec<u32> — each u32 is varint-encoded in postcard
   const indices  = d.vec(() => d.uvarint());
   return { label, vertices, indices };
 }
