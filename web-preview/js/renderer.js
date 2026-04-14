@@ -1289,6 +1289,14 @@ export class VzglydRenderer {
       const samplers = this._world3DSamplers(spec);
       await this._buildWorld3DResources(views, samplers);
     } else {
+      // Screen2D with optional hybrid world background
+      console.log('[vzglyd] background_world:', spec.background_world ? JSON.stringify({
+        static_meshes: spec.background_world.static_meshes?.length,
+        draws: spec.background_world.draws?.length,
+        scene_space: spec.background_world.scene_space,
+        camera_path: !!spec.background_world.camera_path,
+        lighting: !!spec.background_world.lighting,
+      }) : 'null');
       if (spec.background_world) {
         await this._buildHybridWorldBackgroundResources(spec.background_world, fallback);
       }
