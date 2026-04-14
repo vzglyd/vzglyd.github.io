@@ -1368,6 +1368,12 @@ export class VzglydRenderer {
     const fmt        = this._format;
     const hasDepth   = true;
 
+    // Debug: log custom shader source
+    if (spec.shaders?.vertex_wgsl || spec.shaders?.fragment_wgsl) {
+      const { body: shaderBody } = resolveCustomShaderSource(SCREEN2D_PRELUDE, spec.shaders);
+      console.log('[vzglyd] Screen2D custom shader source (first 3000 chars):\n', shaderBody?.substring(0, 3000));
+    }
+
     const { opaque, transparent, usedFallback } = await buildPipelines(
       device,
       bgl,
