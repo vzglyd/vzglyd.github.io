@@ -1978,6 +1978,18 @@ export class VzglydRenderer {
     if (this._backgroundWorld) {
       this._backgroundColorAttachment.view = colorView;
       this._backgroundDepthAttachment.view = this._depthView;
+      const bgDraw = this._backgroundWorld.spec.draws?.[0];
+      const bgMesh = this._backgroundWorld.staticBufs?.[0];
+      const bgPipeline = this._backgroundWorld.pipelines?.[bgDraw?.pipeline];
+      console.log('[vzglyd] bg render pass:', {
+        hasPass: !!this._backgroundPassDescriptor,
+        draws: this._backgroundWorld.spec.draws?.length,
+        staticBufs: this._backgroundWorld.staticBufs?.length,
+        pipelineKind: bgDraw?.pipeline,
+        pipelineOk: !!bgPipeline,
+        meshOk: !!bgMesh,
+        indexCount: bgMesh?.indexCount,
+      });
       const backgroundPass = encoder.beginRenderPass(this._backgroundPassDescriptor);
       this._renderDrawList(
         backgroundPass,
