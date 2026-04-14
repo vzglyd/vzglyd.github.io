@@ -977,8 +977,14 @@ function createPipeline(device, bgl, shaderSrc, vertexLayout, pipelineKind, form
     };
   }
 
+  // World3D slides use push constants for per-draw model matrices (64 bytes = mat4x4<f32>)
+  const usePushConstants = sceneSpace === 'World3D';
+  console.log(`[vzglyd] createPipeline sceneSpace=${sceneSpace} pushConstants=${usePushConstants} shaderLen=${shaderSrc?.length}`);
   const pipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [bgl],
+    pushConstantRanges: usePushConstants ? [
+      { stages: GPUShaderStage.VERTEX, start: 0, end: 64 },
+    ] : [],
   });
 
   // Screen2D transparent quads always face the camera and should render unconditionally.
@@ -1342,6 +1348,17 @@ export class VzglydRenderer {
   async _buildScreen2DResources(views, samplers) {
     const device = this._device;
     const spec   = this._spec;
+
+    // When a Screen2D slide has a hybrid world background and custom shaders,
+    // the shader is likely a World3D shader — use World3D contract instead.
+    const hasWorldBackground = !!this._backgroundWorld;
+    const useWorldContract = hasWorldBackground && (spec.shaders?.vertex_wgsl || spec.shaders?.fragment_wgsl);
+
+    if (useWorldContract) {
+      console.log('[vzglyd] Screen2D slide with world background + custom shader — using World3D shader contract');
+      await this._buildWorld3DResources(views, samplers);
+      return;
+    }
 
     // Uniform buffer: 16 bytes (time + 3 pads)
     this._uniformBuf = device.createBuffer({
