@@ -1431,6 +1431,17 @@ export class VzglydRenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
+    console.log('[vzglyd] hybrid bg bind group entries:', {
+      font: views.font ? 'ok' : 'undefined',
+      noise: views.noise ? 'ok' : 'undefined',
+      materialA: views.materialA ? 'ok' : 'undefined',
+      materialB: views.materialB ? 'ok' : 'undefined',
+      clampSampler: samplers.clampSampler ? 'ok' : 'undefined',
+      repeatSampler: samplers.repeatSampler ? 'ok' : 'undefined',
+      modelMatrixBuf: modelMatrixBuf ? 'ok' : 'undefined',
+      uniformBuf: uniformBuf ? 'ok' : 'undefined',
+    });
+
     const bindGroup = device.createBindGroup({
       layout:  bgl,
       entries: [
