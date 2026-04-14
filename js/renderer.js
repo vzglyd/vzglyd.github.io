@@ -1729,7 +1729,7 @@ export class VzglydRenderer {
   /**
    * Upload pre-built HUD geometry for the upcoming frame.
    * @param {Uint8Array} vertsBytes  packed OverlayVertex data (stride 40 bytes)
-   * @param {Uint8Array} idxsBytes   packed u16 index data
+   * @param {Uint8Array} idxsBytes   packed u32 index data
    */
   applyHudGeometry(vertsBytes, idxsBytes) {
     const device = this._device;
@@ -1755,7 +1755,7 @@ export class VzglydRenderer {
 
     device.queue.writeBuffer(this._hudVertexBuf, 0, vertsBytes);
     device.queue.writeBuffer(this._hudIndexBuf,  0, idxsBytes);
-    this._hudIndexCount = idxsBytes.byteLength / 2; // u16 = 2 bytes each
+    this._hudIndexCount = idxsBytes.byteLength / 4; // u32 = 4 bytes each
   }
 
   // ── Uniform updates ────────────────────────────────────────────────────────
@@ -1989,7 +1989,7 @@ export class VzglydRenderer {
       hudPass.setPipeline(this._hudPipeline);
       hudPass.setBindGroup(0, this._hudBindGroup);
       hudPass.setVertexBuffer(0, this._hudVertexBuf);
-      hudPass.setIndexBuffer(this._hudIndexBuf, 'uint16');
+      hudPass.setIndexBuffer(this._hudIndexBuf, 'uint32');
       hudPass.drawIndexed(this._hudIndexCount);
       hudPass.end();
     }

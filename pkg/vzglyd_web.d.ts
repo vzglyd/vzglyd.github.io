@@ -34,6 +34,14 @@ export class WebHost {
      */
     constructor(canvas: HTMLCanvasElement, host_config?: any | null);
     /**
+     * Configure the screensaver / burn-in protection.
+     *
+     * `timeout_secs` — display seconds before the screensaver activates.
+     * `duration_secs` — how long the screensaver runs before the playlist resumes.
+     * Call with `timeout_secs = 0.0` to disable.
+     */
+    setScreensaverConfig(timeout_secs: number, duration_secs: number): void;
+    /**
      * Start capturing a browser trace in memory.
      */
     startTraceCapture(extra_metadata?: any | null): boolean;
@@ -62,6 +70,18 @@ export function encodeMeshAsset(mesh_json: string): any;
 export function encodeSceneAnchorSet(scene_json: string): any;
 
 /**
+ * Hydrate a playlist entry against its manifest and playlist defaults.
+ *
+ * All three arguments are JSON strings matching the Rust types:
+ * - `entry_json`: serialized [`PlaylistEntry`]
+ * - `manifest_json`: optional serialized [`SlideManifest`] (pass `undefined`/`null` if unavailable)
+ * - `defaults_json`: serialized [`PlaylistDefaults`]
+ *
+ * Returns a serialized [`HydratedPlaylistEntry`] as a JS object, or throws on parse error.
+ */
+export function hydratePlaylistEntry(entry_json: string, manifest_json: string | null | undefined, defaults_json: string): any;
+
+/**
  * Load and compile a GLB scene from bytes.
  *
  * # Arguments
@@ -80,35 +100,66 @@ export function loadGlbScene(glb_bytes: Uint8Array, scene_path: string, scene_re
  */
 export function main(): void;
 
+/**
+ * Maximum display duration exposed to JS so it isn't hardcoded in multiple places.
+ */
+export function maxDisplayDurationSeconds(): number;
+
+/**
+ * Minimum display duration exposed to JS so it isn't hardcoded in multiple places.
+ */
+export function minDisplayDurationSeconds(): number;
+
+/**
+ * Parse a `secrets.json` string and return an object containing only the key names.
+ *
+ * Values are never exposed to the browser. Returns `{ keys: string[] }`.
+ */
+export function parseSecretsJson(json: string): any;
+
+/**
+ * Validate playlist entry params against a manifest's param schema.
+ *
+ * - `params_json`: serialized `serde_json::Value` (the params object), or `"null"`
+ * - `schema_json`: serialized [`ManifestParamsSchema`]
+ *
+ * Returns an array of error strings (empty = valid). Throws on parse error.
+ */
+export function validateEntryParams(params_json: string, schema_json: string): any;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly encodeMeshAsset: (a: number, b: number) => [number, number, number];
-    readonly encodeSceneAnchorSet: (a: number, b: number) => [number, number, number];
-    readonly loadGlbScene: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly __wbg_webhost_free: (a: number, b: number) => void;
+    readonly encodeMeshAsset: (a: number, b: number, c: number) => void;
+    readonly encodeSceneAnchorSet: (a: number, b: number, c: number) => void;
+    readonly hydratePlaylistEntry: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly loadGlbScene: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly main: () => void;
+    readonly maxDisplayDurationSeconds: () => number;
+    readonly minDisplayDurationSeconds: () => number;
+    readonly parseSecretsJson: (a: number, b: number, c: number) => void;
+    readonly validateEntryParams: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly webhost_downloadTrace: (a: number, b: number, c: number) => number;
-    readonly webhost_exportTrace: (a: number) => any;
-    readonly webhost_frame: (a: number, b: number) => [number, number];
-    readonly webhost_loadBundle: (a: number, b: any, c: number) => any;
-    readonly webhost_loadSlide: (a: number, b: any, c: number) => any;
-    readonly webhost_new: (a: any, b: number) => [number, number, number];
+    readonly webhost_exportTrace: (a: number) => number;
+    readonly webhost_frame: (a: number, b: number, c: number) => void;
+    readonly webhost_loadBundle: (a: number, b: number, c: number) => number;
+    readonly webhost_loadSlide: (a: number, b: number, c: number) => number;
+    readonly webhost_new: (a: number, b: number, c: number) => void;
+    readonly webhost_setScreensaverConfig: (a: number, b: number, c: number) => void;
     readonly webhost_startTraceCapture: (a: number, b: number) => number;
-    readonly webhost_stats: (a: number) => any;
+    readonly webhost_stats: (a: number) => number;
     readonly webhost_stopTraceCapture: (a: number, b: number) => number;
     readonly webhost_teardown: (a: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h91834dc9db044ac7: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__h1a70c7e76da950ad: (a: number, b: number, c: any, d: any) => void;
-    readonly __wbindgen_exn_store: (a: number) => void;
-    readonly __externref_table_alloc: () => number;
-    readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
-    readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wasm_bindgen_func_elem_3421: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_3428: (a: number, b: number, c: number, d: number) => void;
+    readonly __wbindgen_export: (a: number, b: number) => number;
+    readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_export3: (a: number) => void;
+    readonly __wbindgen_export4: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export5: (a: number, b: number) => void;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_start: () => void;
 }
 
