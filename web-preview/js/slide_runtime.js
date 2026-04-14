@@ -86,13 +86,28 @@ function toWorldLightingSpec(compiledLighting, fallbackLighting = null) {
 function toWorldStaticMesh(mesh) {
   return {
     label: mesh.label || mesh.id,
-    vertices: mesh.vertices.map((vertex) => ({
-      position: vertex.position,
-      normal: vertex.normal,
-      color: vertex.color,
-      mode: vertex.mode,
-    })),
+    vertices: mesh.vertices.map((vertex) => {
+      if (!vertex.position || !vertex.normal || !vertex.color || vertex.mode === undefined) {
+        console.warn('[vzglyd] bad vertex:', JSON.stringify(vertex));
+      }
+      return {
+        position: vertex.position || [0, 0, 0],
+        normal: vertex.normal || [0, 1, 0],
+        color: vertex.color || [1, 1, 1, 1],
+        mode: vertex.mode ?? 0,
+      };
+    }),
     indices: mesh.indices,
+  };
+}
+
+/** Convert Screen2D vertex to World3D format (tex_coords → normal). */
+function screenVertexToWorldVertex(v) {
+  return {
+    position: v.position || [0, 0, 0],
+    normal: v.normal || [0, 1, 0],
+    color: v.color || [1, 1, 1, 1],
+    mode: v.mode ?? 0,
   };
 }
 
@@ -130,7 +145,7 @@ function attachHybridWorldBackground(spec, compiledMeshes, compiledCameraPath, c
     else transparentDraws.push(draw);
   }
 
-  // Append preserved meshes with offset indices
+  // Append preserved Screen2D meshes converted to World3D format
   const preservedOffset = staticMeshes.length;
   for (const draw of preservedStaticDraws) {
     const newDraw = {
@@ -141,7 +156,14 @@ function attachHybridWorldBackground(spec, compiledMeshes, compiledCameraPath, c
     else transparentDraws.push(newDraw);
   }
 
-  staticMeshes.push(...preservedStaticMeshes);
+  // Convert preserved Screen2D meshes to World3D vertex format
+  for (const mesh of preservedStaticMeshes) {
+    staticMeshes.push({
+      label: mesh.label || '',
+      vertices: mesh.vertices.map(screenVertexToWorldVertex),
+      indices: mesh.indices,
+    });
+  }
 
   // Opaque first, then transparent (matches native ordering)
   spec.static_meshes = staticMeshes;
