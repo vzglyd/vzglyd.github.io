@@ -88,6 +88,11 @@ struct VzglydUniforms {
 @group(0) @binding(5) var s_clamp:             sampler;
 @group(0) @binding(6) var s_repeat:            sampler;
 
+struct VzglydPushConstants {
+    model_matrix: mat4x4<f32>,
+};
+var<push_constant> vzglyd_push: VzglydPushConstants;
+
 fn vzglyd_ambient_light() -> vec3<f32> { return u.ambient_light.rgb; }
 
 fn vzglyd_main_light_dir() -> vec3<f32> {
@@ -153,9 +158,15 @@ const WORLD3D_DEFAULT_BODY = `
 @vertex
 fn vs_main(in: VzglydVertexInput) -> VzglydVertexOutput {
     var out: VzglydVertexOutput;
-    out.clip_pos  = u.view_proj * vec4<f32>(in.position, 1.0);
-    out.world_pos = in.position;
-    out.normal    = normalize(in.normal);
+    let world_pos = (vzglyd_push.model_matrix * vec4<f32>(in.position, 1.0)).xyz;
+    out.clip_pos  = u.view_proj * vec4<f32>(world_pos, 1.0);
+    out.world_pos = world_pos;
+    let normal_mat = mat3x3<f32>(
+        vzglyd_push.model_matrix[0].xyz,
+        vzglyd_push.model_matrix[1].xyz,
+        vzglyd_push.model_matrix[2].xyz,
+    );
+    out.normal    = normalize(normal_mat * in.normal);
     out.color     = in.color;
     out.mode      = in.mode;
     return out;
@@ -317,19 +328,14 @@ function normalize3Into(out, x, y, z) {
 
 function lerp(a, b, t) { return a + (b - a) * t; }
 
-// ── Melbourne clock helper ────────────────────────────────────────────────────
+// ── Local clock helper ────────────────────────────────────────────────────────
 
-function melbourneClockSeconds(nowMs) {
+function localClockSeconds(nowMs) {
   if (!Number.isFinite(nowMs)) {
     return 0;
   }
-  const now = new Date(nowMs);
-  // AEST = UTC+10, AEDT = UTC+11 (Oct–Apr approx)
-  const month = now.getUTCMonth(); // 0-based
-  const isDst = month >= 9 || month <= 3; // Oct(9)..Mar(3) approximate
-  const offsetMs = (isDst ? 11 : 10) * 3600_000;
-  const localMs  = (nowMs + offsetMs) % 86_400_000;
-  return localMs / 1000;
+  const d = new Date(nowMs);
+  return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000;
 }
 
 // ── Texture helpers ───────────────────────────────────────────────────────────
@@ -391,6 +397,58 @@ function createSamplerFromDesc(device, desc) {
     mipmapFilter:  filterModeToGPU(desc.mip_filter),
   });
 }
+
+// ── HUD overlay shader ────────────────────────────────────────────────────────
+//
+// Matches the OverlayVertex layout produced by vzglyd_kernel::overlay:
+//   offset  0: position vec2<f32>  (8 bytes)
+//   offset  8: uv       vec2<f32>  (8 bytes)
+//   offset 16: color    vec4<f32>  (16 bytes)
+//   offset 32: mode     f32        (4 bytes)
+//   offset 36: _pad     f32        (4 bytes — alignment, not read by shader)
+//   stride: 40 bytes
+//
+// mode < 0.5 → solid colour quad
+// mode >= 0.5 → font-atlas glyph (samples red channel for alpha)
+
+const HUD_SHADER_SRC = `
+struct HudVertex {
+    @location(0) position: vec2<f32>,
+    @location(1) uv:       vec2<f32>,
+    @location(2) color:    vec4<f32>,
+    @location(3) mode:     f32,
+};
+
+struct HudVaryings {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) uv:    vec2<f32>,
+    @location(1) color: vec4<f32>,
+    @location(2) mode:  f32,
+};
+
+@group(0) @binding(0) var hud_atlas:   texture_2d<f32>;
+@group(0) @binding(1) var hud_sampler: sampler;
+
+@vertex
+fn vs_main(v: HudVertex) -> HudVaryings {
+    var out: HudVaryings;
+    out.clip_pos = vec4<f32>(v.position, 0.0, 1.0);
+    out.uv       = v.uv;
+    out.color    = v.color;
+    out.mode     = v.mode;
+    return out;
+}
+
+@fragment
+fn fs_main(in: HudVaryings) -> @location(0) vec4<f32> {
+    // textureSample must be in uniform control flow, so always sample and blend:
+    // solid quads (mode < 0.5) use color.a directly; glyph quads use atlas red.
+    let atlas_r = textureSample(hud_atlas, hud_sampler, in.uv).r;
+    let t = step(0.5, in.mode); // 0.0 for solid, 1.0 for glyph
+    let alpha = mix(in.color.a, in.color.a * atlas_r, t);
+    return vec4<f32>(in.color.rgb, alpha);
+}
+`;
 
 // ── Vertex / index buffer helpers ─────────────────────────────────────────────
 
@@ -483,6 +541,156 @@ function sampleCameraInto(out, cameraPath, elapsed) {
   }
 
   return copyCameraSample(out, kf[kf.length - 1]);
+}
+
+// ── Animation matrix sampling ──────────────────────────────────────────────
+
+/** Build identity 4x4 matrix as Float32Array(16). */
+function identityMat4() {
+  return new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+}
+
+/** Sample animation clips at elapsed time, returning per-mesh model matrices. */
+function sampleAnimationMatrices(animations, meshLabels, elapsed) {
+  if (!animations || animations.length === 0) return [];
+
+  const labelToIndex = new Map();
+  meshLabels.forEach((label, i) => labelToIndex.set(label, i));
+  const matrices = meshLabels.map(() => identityMat4());
+
+  for (const clip of animations) {
+    let t = elapsed;
+    if (clip.duration > 0) {
+      if (clip.looped) {
+        t = t % clip.duration;
+      } else {
+        t = Math.min(t, clip.duration);
+      }
+    }
+
+    for (const ch of clip.channels) {
+      const meshIdx = labelToIndex.get(ch.node_label);
+      if (meshIdx === undefined) continue;
+      if (ch.keyframe_times.length < 2) continue;
+
+      // Find keyframe interval
+      let ki = 0;
+      while (ki + 1 < ch.keyframe_times.length && ch.keyframe_times[ki + 1] < t) {
+        ki++;
+      }
+      if (ki + 1 >= ch.keyframe_times.length) ki = ch.keyframe_times.length - 2;
+
+      const t0 = ch.keyframe_times[ki];
+      const t1 = ch.keyframe_times[ki + 1];
+      const span = Math.max(t1 - t0, 0.0001);
+      const lerpT = Math.max(0, Math.min(1, (t - t0) / span));
+
+      const v0 = ch.keyframe_values[ki];
+      const v1 = ch.keyframe_values[ki + 1];
+
+      // Build delta transform and multiply into existing matrix
+      let delta;
+      if (ch.path === 'translation') {
+        const x = lerp(v0[0], v1[0], lerpT);
+        const y = lerp(v0[1], v1[1], lerpT);
+        const z = lerp(v0[2], v1[2], lerpT);
+        delta = makeTranslationMat4(x, y, z);
+      } else if (ch.path === 'rotation') {
+        const q0 = [v0[0], v0[1], v0[2], v0[3]];
+        const q1 = [v1[0], v1[1], v1[2], v1[3]];
+        const q = slerpQuat(q0, q1, lerpT);
+        delta = quatToMat4(q);
+      } else { // scale
+        const x = lerp(v0[0], v1[0], lerpT);
+        const y = lerp(v0[1], v1[1], lerpT);
+        const z = lerp(v0[2], v1[2], lerpT);
+        delta = makeScaleMat4(x, y, z);
+      }
+
+      matrices[meshIdx] = multiplyMat4(delta, matrices[meshIdx]);
+    }
+  }
+
+  return matrices;
+}
+
+function makeTranslationMat4(x, y, z) {
+  return new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    x, y, z, 1,
+  ]);
+}
+
+function makeScaleMat4(x, y, z) {
+  return new Float32Array([
+    x, 0, 0, 0,
+    0, y, 0, 0,
+    0, 0, z, 0,
+    0, 0, 0, 1,
+  ]);
+}
+
+function quatToMat4(q) {
+  const [x, y, z, w] = q;
+  const x2 = x + x, y2 = y + y, z2 = z + z;
+  const xx = x * x2, xy = x * y2, xz = x * z2;
+  const yy = y * y2, yz = y * z2, zz = z * z2;
+  const wx = w * x2, wy = w * y2, wz = w * z2;
+  return new Float32Array([
+    1 - (yy + zz), xy + wz,        xz - wy,        0,
+    xy - wz,       1 - (xx + zz),  yz + wx,        0,
+    xz + wy,       yz - wx,        1 - (xx + yy),  0,
+    0,             0,              0,              1,
+  ]);
+}
+
+function slerpQuat(q0, q1, t) {
+  // Simple slerp for unit quaternions
+  let cosTheta = q0[0] * q1[0] + q0[1] * q1[1] + q0[2] * q1[2] + q0[3] * q1[3];
+  let q1p = q1;
+  if (cosTheta < 0) {
+    cosTheta = -cosTheta;
+    q1p = [-q1[0], -q1[1], -q1[2], -q1[3]];
+  }
+  if (cosTheta > 0.9995) {
+    // Fall back to lerp
+    const s = 1 - t;
+    const r = [
+      s * q0[0] + t * q1p[0],
+      s * q0[1] + t * q1p[1],
+      s * q0[2] + t * q1p[2],
+      s * q0[3] + t * q1p[3],
+    ];
+    const len = Math.sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
+    return len > 0 ? [r[0] / len, r[1] / len, r[2] / len, r[3] / len] : [0, 0, 0, 1];
+  }
+  const theta = Math.acos(cosTheta);
+  const sinTheta = Math.sin(theta);
+  const s0 = Math.sin((1 - t) * theta) / sinTheta;
+  const s1 = Math.sin(t * theta) / sinTheta;
+  return [
+    s0 * q0[0] + s1 * q1p[0],
+    s0 * q0[1] + s1 * q1p[1],
+    s0 * q0[2] + s1 * q1p[2],
+    s0 * q0[3] + s1 * q1p[3],
+  ];
+}
+
+function multiplyMat4(a, b) {
+  const out = new Float32Array(16);
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      out[j * 4 + i] = a[i] * b[j * 4] + a[4 + i] * b[j * 4 + 1] + a[8 + i] * b[j * 4 + 2] + a[12 + i] * b[j * 4 + 3];
+    }
+  }
+  return out;
 }
 
 export function computeRenderTimeSeconds(simulationTimeSecs, alpha, fixedStepSecs) {
@@ -748,7 +956,7 @@ function resolveCustomShaderSource(prelude, shaders) {
   };
 }
 
-function createPipeline(device, bgl, shaderSrc, vertexLayout, pipelineKind, format, hasDepth) {
+function createPipeline(device, bgl, shaderSrc, vertexLayout, pipelineKind, format, hasDepth, sceneSpace = 'World3D') {
   const shaderModule = device.createShaderModule({ code: shaderSrc });
 
   const colorTarget = { format };
@@ -759,14 +967,24 @@ function createPipeline(device, bgl, shaderSrc, vertexLayout, pipelineKind, form
     };
   }
 
+  // World3D slides use push constants for per-draw model matrices (64 bytes = mat4x4<f32>)
+  const usePushConstants = sceneSpace === 'World3D';
   const pipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [bgl],
+    pushConstantRanges: usePushConstants ? [
+      { stages: GPUShaderStage.VERTEX, start: 0, end: 64 },
+    ] : [],
   });
 
+  // Screen2D transparent quads always face the camera and should render unconditionally.
+  // Using 'always' depth compare and no culling prevents intermittent missing triangles
+  // caused by residual background depth values or viewport-space winding edge cases.
+  const isScreen2DTransparent = sceneSpace === 'Screen2D' && pipelineKind === 'Transparent';
   const depthStencil = hasDepth ? {
     format: 'depth32float',
     depthWriteEnabled: pipelineKind === 'Opaque',
-    depthCompare: pipelineKind === 'Opaque' ? 'less' : 'less-equal',
+    depthCompare: isScreen2DTransparent ? 'always'
+                  : (pipelineKind === 'Opaque' ? 'less' : 'less-equal'),
   } : undefined;
 
   return device.createRenderPipeline({
@@ -783,7 +1001,7 @@ function createPipeline(device, bgl, shaderSrc, vertexLayout, pipelineKind, form
     },
     primitive: {
       topology:  'triangle-list',
-      cullMode:  'back',
+      cullMode:  isScreen2DTransparent ? 'none' : 'back',
     },
     depthStencil,
   });
@@ -841,19 +1059,19 @@ function patchTextureSampleToLevel(wgsl) {
  * Before the first attempt, proactively patches textureSample → textureSampleLevel
  * so the shader compiles cleanly on strict WebGPU implementations (Edge, Safari).
  */
-async function createPipelineWithFallback(device, bgl, customSrc, defaultSrc, vertexLayout, pipelineKind, format, hasDepth) {
+async function createPipelineWithFallback(device, bgl, customSrc, defaultSrc, vertexLayout, pipelineKind, format, hasDepth, sceneSpace = 'World3D') {
   // Proactively replace textureSample with textureSampleLevel so the shader
   // works under strict uniform-control-flow validation (Edge, Safari).
   const patchedSrc = patchTextureSampleToLevel(customSrc);
 
   device.pushErrorScope('validation');
-  const pipeline = createPipeline(device, bgl, patchedSrc, vertexLayout, pipelineKind, format, hasDepth);
+  const pipeline = createPipeline(device, bgl, patchedSrc, vertexLayout, pipelineKind, format, hasDepth, sceneSpace);
   const err = await device.popErrorScope();
   if (!err) return { pipeline, usedFallback: false };
 
   console.warn(`[vzglyd] Custom ${pipelineKind} shader failed GPU validation after textureSample patch — falling back to default shader.\n${err.message}`);
   return {
-    pipeline: createPipeline(device, bgl, defaultSrc, vertexLayout, pipelineKind, format, hasDepth),
+    pipeline: createPipeline(device, bgl, defaultSrc, vertexLayout, pipelineKind, format, hasDepth, sceneSpace),
     usedFallback: true,
   };
 }
@@ -875,8 +1093,8 @@ async function buildPipelines(device, bgl, prelude, customShaders, defaultBody, 
     }
 
     return {
-      opaque: createPipeline(device, bgl, defaultSrc, vertexLayout, 'Opaque', format, hasDepth),
-      transparent: createPipeline(device, bgl, defaultSrc, vertexLayout, 'Transparent', format, hasDepth),
+      opaque: createPipeline(device, bgl, defaultSrc, vertexLayout, 'Opaque', format, hasDepth, sceneSpace),
+      transparent: createPipeline(device, bgl, defaultSrc, vertexLayout, 'Transparent', format, hasDepth, sceneSpace),
       usedFallback: Boolean(resolved.error),
     };
   }
@@ -890,12 +1108,13 @@ async function buildPipelines(device, bgl, prelude, customShaders, defaultBody, 
     'Opaque',
     format,
     hasDepth,
+    sceneSpace,
   );
 
   if (opaqueResult.usedFallback) {
     return {
       opaque: opaqueResult.pipeline,
-      transparent: createPipeline(device, bgl, defaultSrc, vertexLayout, 'Transparent', format, hasDepth),
+      transparent: createPipeline(device, bgl, defaultSrc, vertexLayout, 'Transparent', format, hasDepth, sceneSpace),
       usedFallback: true,
     };
   }
@@ -909,6 +1128,7 @@ async function buildPipelines(device, bgl, prelude, customShaders, defaultBody, 
     'Transparent',
     format,
     hasDepth,
+    sceneSpace,
   );
 
   return {
@@ -963,6 +1183,17 @@ export class VzglydRenderer {
     this._fpsLastTime = 0;
     this._fps = 0;
     this._onFps = null; // optional callback(fps)
+
+    // Animation state
+    this._animationElapsed = 0;
+    this._animMatrices = [];  // Float32Array(16) per mesh
+
+    // HUD overlay state (populated by initHud / applyHudGeometry)
+    this._hudPipeline   = null;
+    this._hudBindGroup  = null;
+    this._hudVertexBuf  = null;
+    this._hudIndexBuf   = null;
+    this._hudIndexCount = 0;
 
     this._clearColor = { r: 0, g: 0, b: 0, a: 1 };
     this._backgroundColorAttachment = {
@@ -1406,6 +1637,127 @@ export class VzglydRenderer {
     return wroteMeshBuffer;
   }
 
+  // ── HUD overlay ────────────────────────────────────────────────────────────
+
+  /**
+   * Initialize the HUD pipeline and font atlas texture.
+   * Called once by the Rust host after the surface is ready.
+   * @param {Uint8Array} atlasBytes  flat RGBA8 pixel data
+   * @param {number}     atlasWidth
+   * @param {number}     atlasHeight
+   */
+  initHud(atlasBytes, atlasWidth, atlasHeight) {
+    const device = this._device;
+    if (!device) return;
+
+    const atlasTexture = device.createTexture({
+      label: 'hud_font_atlas',
+      size: [atlasWidth, atlasHeight, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture(
+      { texture: atlasTexture },
+      atlasBytes,
+      { bytesPerRow: atlasWidth * 4 },
+      [atlasWidth, atlasHeight, 1],
+    );
+
+    const bgl = device.createBindGroupLayout({
+      label: 'hud_bgl',
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'float' },
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: { type: 'non-filtering' },
+        },
+      ],
+    });
+
+    this._hudBindGroup = device.createBindGroup({
+      label: 'hud_bind_group',
+      layout: bgl,
+      entries: [
+        { binding: 0, resource: atlasTexture.createView() },
+        { binding: 1, resource: device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' }) },
+      ],
+    });
+
+    const shaderModule = device.createShaderModule({ label: 'hud_shader', code: HUD_SHADER_SRC });
+    const pipelineLayout = device.createPipelineLayout({
+      label: 'hud_pipeline_layout',
+      bindGroupLayouts: [bgl],
+    });
+
+    this._hudPipeline = device.createRenderPipeline({
+      label: 'hud_pipeline',
+      layout: pipelineLayout,
+      vertex: {
+        module: shaderModule,
+        entryPoint: 'vs_main',
+        buffers: [{
+          arrayStride: 40,
+          stepMode: 'vertex',
+          attributes: [
+            { shaderLocation: 0, offset:  0, format: 'float32x2' }, // position
+            { shaderLocation: 1, offset:  8, format: 'float32x2' }, // uv
+            { shaderLocation: 2, offset: 16, format: 'float32x4' }, // color
+            { shaderLocation: 3, offset: 32, format: 'float32'   }, // mode
+          ],
+        }],
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: 'fs_main',
+        targets: [{
+          format: this._format,
+          blend: {
+            color: { srcFactor: 'src-alpha',     dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            alpha: { srcFactor: 'one',            dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          },
+        }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+  }
+
+  /**
+   * Upload pre-built HUD geometry for the upcoming frame.
+   * @param {Uint8Array} vertsBytes  packed OverlayVertex data (stride 40 bytes)
+   * @param {Uint8Array} idxsBytes   packed u16 index data
+   */
+  applyHudGeometry(vertsBytes, idxsBytes) {
+    const device = this._device;
+    if (!device || !this._hudPipeline) return;
+
+    if (!this._hudVertexBuf || this._hudVertexBuf.size < vertsBytes.byteLength) {
+      this._hudVertexBuf?.destroy();
+      this._hudVertexBuf = device.createBuffer({
+        label: 'hud_vertex',
+        size: Math.max(vertsBytes.byteLength, 4096),
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+    }
+    const idxAligned = Math.ceil(idxsBytes.byteLength / 4) * 4;
+    if (!this._hudIndexBuf || this._hudIndexBuf.size < idxAligned) {
+      this._hudIndexBuf?.destroy();
+      this._hudIndexBuf = device.createBuffer({
+        label: 'hud_index',
+        size: Math.max(idxAligned, 1024),
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+      });
+    }
+
+    device.queue.writeBuffer(this._hudVertexBuf, 0, vertsBytes);
+    device.queue.writeBuffer(this._hudIndexBuf,  0, idxsBytes);
+    this._hudIndexCount = idxsBytes.byteLength / 2; // u16 = 2 bytes each
+  }
+
   // ── Uniform updates ────────────────────────────────────────────────────────
 
   _writeScreen2DUniforms(elapsed) {
@@ -1452,7 +1804,7 @@ export class VzglydRenderer {
     // fog_start: 24, fog_end: 25, clock_seconds: 26, _pad: 27
     data[24] = 18.0;
     data[25] = 75.0;
-    data[26] = melbourneClockSeconds(wallClockMs);
+    data[26] = localClockSeconds(wallClockMs);
     data[27] = 0;
     // ambient_light: 28-31
     data[28] = lighting.ambient_color[0] * ambIntensity;
@@ -1504,7 +1856,7 @@ export class VzglydRenderer {
     );
   }
 
-  _renderDrawList(renderPass, pipelines, bindGroup, draws, staticBufs, dynamicBufs = null) {
+  _renderDrawList(renderPass, pipelines, bindGroup, draws, staticBufs, dynamicBufs = null, animMatrices = null) {
     renderPass.setBindGroup(0, bindGroup);
 
     for (const draw of draws) {
@@ -1517,6 +1869,14 @@ export class VzglydRenderer {
         ? staticBufs[index]
         : dynamicBufs?.[index];
       if (!buf) continue;
+
+      // Set model matrix via push constants (World3D only; identity for unanimated)
+      if (animMatrices && kind === 'Static') {
+        const modelMatrix = animMatrices[index] || null;
+        if (modelMatrix) {
+          renderPass.setPushConstants(GPUShaderStage.VERTEX, 0, modelMatrix);
+        }
+      }
 
       renderPass.setVertexBuffer(0, buf.vertex);
       renderPass.setIndexBuffer(buf.index, 'uint16');
@@ -1578,6 +1938,14 @@ export class VzglydRenderer {
     const colorTex = this._context.getCurrentTexture();
     const colorView = colorTex.createView();
 
+    // Advance animation elapsed time
+    this._animationElapsed += frameTiming.fixedStepSecs || (1 / 60);
+
+    // Sample animation matrices for world slides
+    const animMatrices = (spec.scene_space === 'World3D' && spec.animations && spec.animations.length > 0)
+      ? sampleAnimationMatrices(spec.animations, spec.meshes.map(m => m.label), this._animationElapsed)
+      : null;
+
     if (this._backgroundWorld) {
       this._backgroundColorAttachment.view = colorView;
       this._backgroundDepthAttachment.view = this._depthView;
@@ -1597,7 +1965,7 @@ export class VzglydRenderer {
     this._mainDepthAttachment.view = this._depthView;
     const renderPass = encoder.beginRenderPass(this._mainPassDescriptor);
 
-    this._renderDrawList(renderPass, this._pipelines, this._bindGroup, spec.draws, this._staticBufs, this._dynamicBufs);
+    this._renderDrawList(renderPass, this._pipelines, this._bindGroup, spec.draws, this._staticBufs, this._dynamicBufs, animMatrices);
 
     if (this._overlayBuf && this._overlayBuf.indexCount > 0) {
       renderPass.setPipeline(this._pipelines.Transparent);
@@ -1608,6 +1976,24 @@ export class VzglydRenderer {
     }
 
     renderPass.end();
+
+    // HUD overlay pass — runs after slide content, before present.
+    if (this._hudPipeline && this._hudIndexCount > 0) {
+      const hudPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: colorView,
+          loadOp: 'load',
+          storeOp: 'store',
+        }],
+      });
+      hudPass.setPipeline(this._hudPipeline);
+      hudPass.setBindGroup(0, this._hudBindGroup);
+      hudPass.setVertexBuffer(0, this._hudVertexBuf);
+      hudPass.setIndexBuffer(this._hudIndexBuf, 'uint16');
+      hudPass.drawIndexed(this._hudIndexCount);
+      hudPass.end();
+    }
+
     this._queue.submit([encoder.finish()]);
   }
 

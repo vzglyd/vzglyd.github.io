@@ -182,6 +182,25 @@ function decodeTextureDesc(d) {
   };
 }
 
+function decodeSoundDesc(d) {
+  return {
+    key:    d.string(),
+    format: decodeSoundFormat(d),
+    data:   d.bytes(),
+  };
+}
+
+function decodeSoundFormat(d) {
+  const v = d.uvarint();
+  switch (v) {
+    case 0: return 'Mp3';
+    case 1: return 'Wav';
+    case 2: return 'Ogg';
+    case 3: return 'Flac';
+    default: throw new Error(`unknown SoundFormat variant ${v}`);
+  }
+}
+
 function decodeScreenVertex(d) {
   return {
     position:   d.f32Array(3),
@@ -362,7 +381,7 @@ function decodeSlideSpec(bytes) {
 
   // Fields in declaration order from vzglyd_slide::SlideSpec<V>:
   //   name, limits, scene_space, camera_path, shaders, overlay, font,
-  //   textures_used, textures, static_meshes, dynamic_meshes, draws, lighting
+  //   textures_used, textures, sounds, static_meshes, dynamic_meshes, draws, lighting
 
   const camera_path = d.option(decodeCameraPath);
   const shaders     = d.option(decodeShaderSources);
@@ -371,6 +390,8 @@ function decodeSlideSpec(bytes) {
 
   const textures_used  = d.uvarint();
   const textures       = d.vec(decodeTextureDesc);
+  const sounds         = d.vec(decodeSoundDesc);
+  const animations     = d.vec(decodeAnimationClip);
   const static_meshes  = d.vec(function() { return decodeStaticMesh(d, scene_space); });
   const dynamic_meshes = d.vec(decodeDynamicMesh);
   const draws          = d.vec(decodeDrawSpec);
@@ -386,10 +407,40 @@ function decodeSlideSpec(bytes) {
     font,
     textures_used,
     textures,
+    sounds,
+    animations,
     static_meshes,
     dynamic_meshes,
     draws,
     lighting,
+  };
+}
+
+// ── Animation types (embedded in SlideSpec) ─────────────────────────────────
+
+function decodeAnimationPath(d) {
+  const v = d.uvarint();
+  if (v === 0) return 'Translation';
+  if (v === 1) return 'Rotation';
+  if (v === 2) return 'Scale';
+  throw new Error('unknown AnimationPath variant: ' + v);
+}
+
+function decodeAnimationChannel(d) {
+  return {
+    node_label: d.string(),
+    path: decodeAnimationPath(d),
+    keyframe_times: d.vec(function() { return this.f32(); }),
+    keyframe_values: d.vec(function() { return [this.f32(), this.f32(), this.f32(), this.f32()]; }),
+  };
+}
+
+function decodeAnimationClip(d) {
+  return {
+    name: d.string(),
+    duration: d.f32(),
+    looped: d.bool(),
+    channels: d.vec(decodeAnimationChannel),
   };
 }
 

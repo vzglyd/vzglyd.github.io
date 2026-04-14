@@ -250,7 +250,7 @@ async function ensureRuntime() {
   if (!runtimeModulePromise) {
     runtimeModulePromise = (async () => {
       const runtime = await import('./pkg/vzglyd_web.js');
-      await runtime.default();
+      if (typeof runtime.default === 'function') { await runtime.default(); }
       WebHostCtor = runtime.WebHost;
     })();
   }
