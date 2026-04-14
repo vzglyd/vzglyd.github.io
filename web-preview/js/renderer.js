@@ -809,8 +809,13 @@ function shaderChunkSummary(chunk) {
 }
 
 function preflightShaderBody(body) {
-  const vsCount = countEntryPoint(body, VZGLYD_VERTEX_ENTRY_POINT);
-  const fsCount = countEntryPoint(body, VZGLYD_FRAGMENT_ENTRY_POINT);
+  // Strip push_constant declarations from custom shader bodies — web uses uniform buffer instead
+  const sanitizedBody = body
+    .replace(/var\s*<\s*push_constant\s*>\s*\w+\s*:\s*\w+\s*;/g, '')
+    .replace(/struct\s+VzglydPushConstants\s*\{[^}]*\}/g, '');
+
+  const vsCount = countEntryPoint(sanitizedBody, VZGLYD_VERTEX_ENTRY_POINT);
+  const fsCount = countEntryPoint(sanitizedBody, VZGLYD_FRAGMENT_ENTRY_POINT);
   if (vsCount !== 1 || fsCount !== 1) {
     return {
       error:
@@ -818,7 +823,7 @@ function preflightShaderBody(body) {
         `after normalization, got ${VZGLYD_VERTEX_ENTRY_POINT}=${vsCount}, ${VZGLYD_FRAGMENT_ENTRY_POINT}=${fsCount}`,
     };
   }
-  return { error: null };
+  return { error: null, sanitizedBody };
 }
 
 export function normalizeCustomShaderBody(shaders) {
@@ -949,12 +954,15 @@ function resolveCustomShaderSource(prelude, shaders) {
     };
   }
 
+  // Use sanitized body (push_constant stripped) for web
+  const shaderBody = preflight.sanitizedBody ?? normalized.body;
+
   return {
-    body: normalized.body,
+    body: shaderBody,
     warnings: normalized.warnings,
     infos: normalized.infos,
     error: null,
-    source: buildShaderSource(prelude, normalized.body),
+    source: buildShaderSource(prelude, shaderBody),
   };
 }
 
