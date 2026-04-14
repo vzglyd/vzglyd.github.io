@@ -87,11 +87,11 @@ struct VzglydUniforms {
 @group(0) @binding(4) var t_material_b:        texture_2d<f32>;
 @group(0) @binding(5) var s_clamp:             sampler;
 @group(0) @binding(6) var s_repeat:            sampler;
+@group(0) @binding(7) var<uniform> vzglyd_push: VzglydPushConstants;
 
 struct VzglydPushConstants {
     model_matrix: mat4x4<f32>,
 };
-var<push_constant> vzglyd_push: VzglydPushConstants;
 
 fn vzglyd_ambient_light() -> vec3<f32> { return u.ambient_light.rgb; }
 
@@ -730,6 +730,8 @@ function makeWorld3DBindGroupLayout(device) {
       { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture:  { sampleType: 'float' } },  // t_material_b
       { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler:  {} },                       // s_clamp
       { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler:  {} },                       // s_repeat
+      { binding: 7, visibility: GPUShaderStage.VERTEX,
+        buffer: { type: 'uniform' } },                                                          // vzglyd_push (model_matrix)
     ],
   });
 }
@@ -967,13 +969,8 @@ function createPipeline(device, bgl, shaderSrc, vertexLayout, pipelineKind, form
     };
   }
 
-  // World3D slides use push constants for per-draw model matrices (64 bytes = mat4x4<f32>)
-  const usePushConstants = sceneSpace === 'World3D';
   const pipelineLayout = device.createPipelineLayout({
     bindGroupLayouts: [bgl],
-    pushConstantRanges: usePushConstants ? [
-      { stages: GPUShaderStage.VERTEX, start: 0, end: 64 },
-    ] : [],
   });
 
   // Screen2D transparent quads always face the camera and should render unconditionally.
@@ -1387,6 +1384,14 @@ export class VzglydRenderer {
     const views = this._uploadWorld3DTextures(backgroundSpec, fallback);
     const samplers = this._world3DSamplers(backgroundSpec);
     const bgl = makeWorld3DBindGroupLayout(device);
+
+    // Model matrix buffer for hybrid world background (static identity)
+    const modelMatrixBuf = device.createBuffer({
+      label: 'hybrid_world_model_matrix',
+      size:  64, // mat4x4<f32>
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
     const bindGroup = device.createBindGroup({
       layout:  bgl,
       entries: [
@@ -1397,6 +1402,7 @@ export class VzglydRenderer {
         { binding: 4, resource: views.materialB },
         { binding: 5, resource: samplers.clampSampler },
         { binding: 6, resource: samplers.repeatSampler },
+        { binding: 7, resource: { buffer: modelMatrixBuf } },
       ],
     });
 
@@ -1469,6 +1475,12 @@ export class VzglydRenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
+    this._modelMatrixBuf = device.createBuffer({
+      label: 'world3d_model_matrix',
+      size:  64, // mat4x4<f32>
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
     const bgl = makeWorld3DBindGroupLayout(device);
     this._bindGroup = device.createBindGroup({
       layout:  bgl,
@@ -1480,6 +1492,7 @@ export class VzglydRenderer {
         { binding: 4, resource: views.materialB },
         { binding: 5, resource: samplers.clampSampler },
         { binding: 6, resource: samplers.repeatSampler },
+        { binding: 7, resource: { buffer: this._modelMatrixBuf } },
       ],
     });
 
@@ -1870,11 +1883,11 @@ export class VzglydRenderer {
         : dynamicBufs?.[index];
       if (!buf) continue;
 
-      // Set model matrix via push constants (World3D only; identity for unanimated)
+      // Set model matrix via uniform buffer (World3D only; identity for unanimated)
       if (animMatrices && kind === 'Static') {
         const modelMatrix = animMatrices[index] || null;
         if (modelMatrix) {
-          renderPass.setPushConstants(GPUShaderStage.VERTEX, 0, modelMatrix);
+          this._queue.writeBuffer(this._modelMatrixBuf, 0, modelMatrix);
         }
       }
 
