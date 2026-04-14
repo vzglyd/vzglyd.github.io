@@ -253,7 +253,9 @@ async function loadBundleBytes(bytes, label, bundleUrl = null, params = null) {
     clearStatus();
     startRenderLoop();
   } catch (error) {
-    showError(`Failed to load bundle: ${error.message}`);
+    console.error('[vzglyd] loadBundleBytes raw error:', error);
+    const msg = error instanceof Error ? error.message : String(error);
+    showError(`Failed to load bundle: ${msg}`);
     clearStatus();
     resetCanvasUi();
     throw error;
