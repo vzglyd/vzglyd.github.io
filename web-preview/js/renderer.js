@@ -1515,6 +1515,13 @@ export class VzglydRenderer {
     const device = this._device;
     const spec   = this._spec;
 
+    console.log('[vzglyd] _buildWorld3DResources views:', {
+      font: views.font ? 'ok' : 'undefined',
+      noise: views.noise ? 'ok' : 'undefined',
+      materialA: views.materialA ? 'ok' : 'undefined',
+      materialB: views.materialB ? 'ok' : 'undefined',
+    });
+
     // Uniform buffer: 160 bytes
     // view_proj(64) + cam_pos(12) + time(4) + fog_color(16) +
     // fog_start(4) + fog_end(4) + clock_seconds(4) + _pad(4) +
@@ -1532,18 +1539,24 @@ export class VzglydRenderer {
     });
 
     const bgl = makeWorld3DBindGroupLayout(device);
+    const bgEntries = [
+      { binding: 0, resource: { buffer: this._uniformBuf } },
+      { binding: 1, resource: views.font },
+      { binding: 2, resource: views.noise },
+      { binding: 3, resource: views.materialA },
+      { binding: 4, resource: views.materialB },
+      { binding: 5, resource: samplers.clampSampler },
+      { binding: 6, resource: samplers.repeatSampler },
+      { binding: 7, resource: { buffer: this._modelMatrixBuf } },
+    ];
+    console.log('[vzglyd] world3d bind group entries check:', bgEntries.map((e, i) => ({
+      binding: e.binding,
+      resource: e.resource ? 'defined' : 'undefined',
+      buffer: e.resource?.buffer ? 'defined' : 'undefined',
+    })));
     this._bindGroup = device.createBindGroup({
       layout:  bgl,
-      entries: [
-        { binding: 0, resource: { buffer: this._uniformBuf } },
-        { binding: 1, resource: views.font },
-        { binding: 2, resource: views.noise },
-        { binding: 3, resource: views.materialA },
-        { binding: 4, resource: views.materialB },
-        { binding: 5, resource: samplers.clampSampler },
-        { binding: 6, resource: samplers.repeatSampler },
-        { binding: 7, resource: { buffer: this._modelMatrixBuf } },
-      ],
+      entries: bgEntries,
     });
 
     const vertLayout = WORLD3D_VERTEX_LAYOUT;
