@@ -903,6 +903,7 @@ export function normalizeCustomShaderBody(shaders) {
     }
 
     const body = vertexChunks[0].source + '\n' + fragmentChunks[0].source;
+    console.log('[vzglyd] Custom shader body (first 4000 chars):\n', body.substring(0, 4000));
     const preflight = preflightShaderBody(body);
     return { body: preflight.error ? null : body, warnings, infos, error: preflight.error };
   }
